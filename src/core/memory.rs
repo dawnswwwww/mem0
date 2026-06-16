@@ -16,6 +16,19 @@ pub enum Lifecycle {
 
 impl Lifecycle {
     pub const ALL: [Lifecycle; 3] = [Lifecycle::Working, Lifecycle::Episodic, Lifecycle::Semantic];
+
+    /// Returns true iff moving a memory from `self` to `target` is allowed.
+    /// Same-layer transitions are disallowed; use `set_lifecycle` only for
+    /// actual moves.
+    pub fn can_transition_to(self, target: Lifecycle) -> bool {
+        use Lifecycle::*;
+        matches!(
+            (self, target),
+            (Working,  Episodic)
+            | (Working,  Semantic)
+            | (Episodic, Semantic)
+        )
+    }
 }
 
 impl fmt::Display for Lifecycle {
@@ -67,6 +80,29 @@ mod tests {
     fn display_roundtrips_with_parse() {
         for l in [Lifecycle::Working, Lifecycle::Episodic, Lifecycle::Semantic] {
             assert_eq!(l.to_string().parse::<Lifecycle>().unwrap(), l);
+        }
+    }
+
+    #[test]
+    fn transition_table_matches_spec() {
+        use Lifecycle::*;
+        let allowed = [
+            (Working,  Episodic),
+            (Working,  Semantic),
+            (Episodic, Semantic),
+        ];
+        for (from, to) in allowed {
+            assert!(from.can_transition_to(to), "{from} should -> {to}");
+        }
+
+        let disallowed = [
+            (Working,  Working),
+            (Episodic, Working),
+            (Semantic, Working),
+            (Semantic, Episodic),
+        ];
+        for (from, to) in disallowed {
+            assert!(!from.can_transition_to(to), "{from} must not -> {to}");
         }
     }
 }
