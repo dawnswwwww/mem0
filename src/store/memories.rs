@@ -107,6 +107,22 @@ pub fn delete(conn: &Connection, id: uuid::Uuid) -> MemResult<()> {
     if n == 0 { Err(MemError::NotFound(id.to_string())) } else { Ok(()) }
 }
 
+pub fn set_lifecycle(conn: &Connection, id: uuid::Uuid, target: Lifecycle) -> MemResult<MemoryItem> {
+    let current = get(conn, id)?;
+    if !current.lifecycle.can_transition_to(target) {
+        return Err(MemError::InvalidTransition { from: current.lifecycle, to: target });
+    }
+    let ts = now_nanos();
+    let n = conn.execute(
+        "UPDATE memories SET lifecycle = ?1, updated_at = ?2 WHERE id = ?3 AND lifecycle = ?4",
+        rusqlite::params![target.to_string(), ts, id.to_string(), current.lifecycle.to_string()],
+    )?;
+    if n == 0 {
+        return Err(MemError::NotFound(id.to_string()));
+    }
+    get(conn, id)
+}
+
 pub fn list(conn: &Connection, filter: ListFilter) -> MemResult<Vec<MemoryItem>> {
     let mut sql = String::from(
         "SELECT id, lifecycle, content, source, session_id, tags, created_at, updated_at, accessed_at \

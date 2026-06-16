@@ -187,3 +187,30 @@ fn delete_unknown_returns_not_found() {
     let err = memories::delete(&conn, bogus).unwrap_err();
     assert!(matches!(err, mem0::MemError::NotFound(_)));
 }
+
+#[test]
+fn set_lifecycle_legal_transition_succeeds() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Working, content: "x".into(), tags: vec![], session_id: None, source: None };
+    let id = memories::insert(&conn, &d).unwrap();
+    let updated = memories::set_lifecycle(&conn, id, Lifecycle::Semantic).unwrap();
+    assert_eq!(updated.lifecycle, Lifecycle::Semantic);
+    assert!(updated.updated_at >= updated.created_at);
+}
+
+#[test]
+fn set_lifecycle_illegal_transition_returns_err() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "x".into(), tags: vec![], session_id: None, source: None };
+    let id = memories::insert(&conn, &d).unwrap();
+    let err = memories::set_lifecycle(&conn, id, Lifecycle::Working).unwrap_err();
+    assert!(matches!(err, mem0::MemError::InvalidTransition { .. }), "got {err:?}");
+}
+
+#[test]
+fn set_lifecycle_unknown_id_returns_not_found() {
+    let (_tmp, conn) = fresh();
+    let bogus = uuid::Uuid::now_v7();
+    let err = memories::set_lifecycle(&conn, bogus, Lifecycle::Semantic).unwrap_err();
+    assert!(matches!(err, mem0::MemError::NotFound(_)));
+}
