@@ -71,9 +71,17 @@ pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
     let id = ids::new_v7();
     let ts = now_nanos();
     let tags_json = serde_json::to_string(&draft.tags)?;
+    // Denormalized cache for FTS5: lowercase, space-separated.
+    // Must match the format produced by apply_v2_v1_1's backfill.
+    let tags_text = draft
+        .tags
+        .iter()
+        .map(|t| t.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
     conn.execute(
-        "INSERT INTO memories (id, lifecycle, content, source, session_id, tags, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        "INSERT INTO memories (id, lifecycle, content, source, session_id, tags, tags_text, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
         rusqlite::params![
             id.to_string(),
             draft.lifecycle.to_string(),
@@ -81,6 +89,7 @@ pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
             draft.source,
             draft.session_id.map(|u| u.to_string()),
             tags_json,
+            tags_text,
             ts,
         ],
     )?;

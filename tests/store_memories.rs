@@ -119,7 +119,6 @@ fn search_finds_matching_content() {
 }
 
 #[test]
-#[ignore = "v1.1: FTS5 indexes tags_text (denormalized) instead of tags JSON. Re-enabled by Task 4 when insert() populates tags_text."]
 fn search_also_matches_tags() {
     let (_tmp, conn) = fresh();
     let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "some fact".into(), tags: vec!["whiskey".into()], session_id: None, source: None };
@@ -269,4 +268,25 @@ fn count_by_layer_groups_correctly() {
     assert_eq!(counts.get(&Lifecycle::Semantic).copied().unwrap_or(0), 2);
     assert_eq!(counts.get(&Lifecycle::Working).copied().unwrap_or(0),  1);
     assert_eq!(counts.get(&Lifecycle::Episodic).copied().unwrap_or(0), 1);
+}
+
+#[test]
+fn insert_populates_tags_text() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft {
+        lifecycle:  Lifecycle::Semantic,
+        content:    "fact".into(),
+        tags:       vec!["Preference".into(), "WHISKEY".into()],
+        session_id: None,
+        source:     None,
+    };
+    let id = memories::insert(&conn, &d).unwrap();
+    let tags_text: String = conn
+        .query_row(
+            "SELECT tags_text FROM memories WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tags_text, "preference whiskey");
 }
