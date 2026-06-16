@@ -98,3 +98,33 @@ pub fn get(conn: &Connection, id: uuid::Uuid) -> MemResult<MemoryItem> {
         .optional()?;
     row.ok_or_else(|| MemError::NotFound(id.to_string()))
 }
+
+pub fn list(conn: &Connection, filter: ListFilter) -> MemResult<Vec<MemoryItem>> {
+    let mut sql = String::from(
+        "SELECT id, lifecycle, content, source, session_id, tags, created_at, updated_at, accessed_at \
+         FROM memories WHERE 1=1",
+    );
+    let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(layer) = filter.layer {
+        sql.push_str(" AND lifecycle = ?");
+        binds.push(Box::new(layer.to_string()));
+    }
+    if let Some(sid) = filter.session {
+        sql.push_str(" AND session_id = ?");
+        binds.push(Box::new(sid.to_string()));
+    }
+    if let Some(since) = filter.since_nanos {
+        sql.push_str(" AND created_at >= ?");
+        binds.push(Box::new(since));
+    }
+    sql.push_str(" ORDER BY created_at DESC");
+    let limit = if filter.limit == 0 { 100 } else { filter.limit };
+    sql.push_str(&format!(" LIMIT {}", limit.min(1000)));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| &**b as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), row_to_item)?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r?); }
+    Ok(out)
+}
