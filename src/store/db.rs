@@ -7,12 +7,20 @@ use crate::core::MemResult;
 pub fn open(path: &Path) -> MemResult<Connection> {
     let conn = Connection::open_with_flags(
         path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     // Pragmas must be applied per-connection.
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.pragma_update(None, "busy_timeout", "5000")?;
+    // Use update_and_check for journal_mode so a silent WAL fallback to DELETE
+    // (e.g. on a read-only or network filesystem) surfaces as an error.
+    let mode: String =
+        conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+    debug_assert_eq!(mode.to_lowercase(), "wal");
+
+    conn.pragma_update(None, "synchronous", 1_i64)?; // NORMAL = 1
+    conn.pragma_update(None, "foreign_keys", true)?;
+    conn.pragma_update(None, "busy_timeout", 5000_i64)?;
     Ok(conn)
 }
