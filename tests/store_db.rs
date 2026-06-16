@@ -10,15 +10,29 @@ fn migrate_is_idempotent_and_creates_all_objects() {
     mem0::store::db::migrate(&conn).unwrap();
     mem0::store::db::migrate(&conn).unwrap();
 
-    let count: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type IN ('table','index','trigger') AND name LIKE 'memories%' OR name = 'sessions'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    // memories table + 2 indexes + 1 fts table + 3 triggers + sessions table = 8
-    assert!(count >= 8, "expected >=8 schema objects, got {count}");
+    // Enumerate the 8 user-facing schema objects explicitly. FTS5 shadow
+    // tables (memories_fts_config/data/docsize/idx) are an implementation
+    // detail and are not part of the v1 schema contract.
+    let expected: Vec<&str> = vec![
+        "memories",
+        "idx_memories_layer_created",
+        "idx_memories_session",
+        "memories_fts",
+        "memories_ai",
+        "memories_ad",
+        "memories_au",
+        "sessions",
+    ];
+    for name in expected {
+        let exists: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = ?1",
+                rusqlite::params![name],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1, "schema object missing: {name}");
+    }
 }
 
 #[test]
