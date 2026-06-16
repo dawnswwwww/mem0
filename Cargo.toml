@@ -2,5 +2,31 @@
 name = "mem0"
 version = "0.1.0"
 edition = "2024"
+description = "Local-first three-layer memory store for AI agents"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/mem0"
+readme = "README.md"
+keywords = ["memory", "agent", "ai", "sqlite", "fts5"]
+categories = ["command-line-utilities", "database"]
+
+[lib]
+name = "mem0"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mem0"
+path = "src/main.rs"
 
 [dependencies]
+clap        = { version = "4", features = ["derive", "env"] }
+rusqlite    = { version = "0.32", features = ["bundled"] }
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+uuid        = { version = "1", features = ["v7", "serde"] }
+thiserror   = "1"
+dirs        = "5"
+
+[dev-dependencies]
+assert_cmd  = "2"
+predicates  = "3"
+tempfile    = "3"
