@@ -1,0 +1,100 @@
+use rusqlite::{Connection, OptionalExtension, Row};
+
+use crate::core::error::{MemError, MemResult};
+use crate::core::ids;
+use crate::core::memory::Lifecycle;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryItem {
+    pub id:          uuid::Uuid,
+    pub lifecycle:   Lifecycle,
+    pub content:     String,
+    pub source:      Option<String>,
+    pub session_id:  Option<uuid::Uuid>,
+    pub tags:        Vec<String>,
+    pub created_at:  i64,
+    pub updated_at:  i64,
+    pub accessed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryDraft {
+    pub lifecycle:  Lifecycle,
+    pub content:    String,
+    pub tags:       Vec<String>,
+    pub session_id: Option<uuid::Uuid>,
+    pub source:     Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ListFilter {
+    pub layer:        Option<Lifecycle>,
+    pub session:      Option<uuid::Uuid>,
+    pub since_nanos:  Option<i64>,
+    pub limit:        u32,
+}
+
+fn now_nanos() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0)
+}
+
+fn parse_lifecycle(s: &str) -> MemResult<Lifecycle> {
+    s.parse()
+}
+
+fn row_to_item(row: &Row<'_>) -> rusqlite::Result<MemoryItem> {
+    let id_s: String = row.get("id")?;
+    let lifecycle_s: String = row.get("lifecycle")?;
+    let session_s: Option<String> = row.get("session_id")?;
+    let tags_s: String = row.get("tags")?;
+    Ok(MemoryItem {
+        id:          ids::parse(&id_s).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))))?,
+        lifecycle:   parse_lifecycle(&lifecycle_s).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))))?,
+        content:     row.get("content")?,
+        source:      row.get("source")?,
+        session_id:  session_s.map(|s| ids::parse(&s)).transpose().map_err(|e| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))))?,
+        tags:        serde_json::from_str(&tags_s).map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))))?,
+        created_at:  row.get("created_at")?,
+        updated_at:  row.get("updated_at")?,
+        accessed_at: row.get("accessed_at")?,
+    })
+}
+
+pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
+    if draft.content.is_empty() {
+        return Err(MemError::InvalidArgument("content cannot be empty".into()));
+    }
+    let id = ids::new_v7();
+    let ts = now_nanos();
+    let tags_json = serde_json::to_string(&draft.tags)?;
+    conn.execute(
+        "INSERT INTO memories (id, lifecycle, content, source, session_id, tags, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        rusqlite::params![
+            id.to_string(),
+            draft.lifecycle.to_string(),
+            draft.content,
+            draft.source,
+            draft.session_id.map(|u| u.to_string()),
+            tags_json,
+            ts,
+        ],
+    )?;
+    Ok(id)
+}
+
+pub fn get(conn: &Connection, id: uuid::Uuid) -> MemResult<MemoryItem> {
+    let row = conn
+        .query_row(
+            "SELECT id, lifecycle, content, source, session_id, tags, created_at, updated_at, accessed_at \
+             FROM memories WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+            row_to_item,
+        )
+        .optional()?;
+    row.ok_or_else(|| MemError::NotFound(id.to_string()))
+}
