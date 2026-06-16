@@ -99,6 +99,14 @@ pub fn get(conn: &Connection, id: uuid::Uuid) -> MemResult<MemoryItem> {
     row.ok_or_else(|| MemError::NotFound(id.to_string()))
 }
 
+pub fn delete(conn: &Connection, id: uuid::Uuid) -> MemResult<()> {
+    let n = conn.execute(
+        "DELETE FROM memories WHERE id = ?1",
+        rusqlite::params![id.to_string()],
+    )?;
+    if n == 0 { Err(MemError::NotFound(id.to_string())) } else { Ok(()) }
+}
+
 pub fn list(conn: &Connection, filter: ListFilter) -> MemResult<Vec<MemoryItem>> {
     let mut sql = String::from(
         "SELECT id, lifecycle, content, source, session_id, tags, created_at, updated_at, accessed_at \

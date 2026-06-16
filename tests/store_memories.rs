@@ -167,3 +167,23 @@ fn search_filters_by_since_nanos() {
     let hits = memories::search(&conn, "whiskey", ListFilter { since_nanos: Some(past), ..Default::default() }).unwrap();
     assert_eq!(hits.len(), 1);
 }
+
+#[test]
+fn delete_removes_row_and_fts_entry() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "whiskey fact".into(), tags: vec![], session_id: None, source: None };
+    let id = memories::insert(&conn, &d).unwrap();
+    memories::delete(&conn, id).unwrap();
+    let err = memories::get(&conn, id).unwrap_err();
+    assert!(matches!(err, mem0::MemError::NotFound(_)));
+    let hits = memories::search(&conn, "whiskey", ListFilter::default()).unwrap();
+    assert!(hits.is_empty(), "fts trigger should remove");
+}
+
+#[test]
+fn delete_unknown_returns_not_found() {
+    let (_tmp, conn) = fresh();
+    let bogus = uuid::Uuid::now_v7();
+    let err = memories::delete(&conn, bogus).unwrap_err();
+    assert!(matches!(err, mem0::MemError::NotFound(_)));
+}
