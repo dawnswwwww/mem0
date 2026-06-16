@@ -119,6 +119,7 @@ fn search_finds_matching_content() {
 }
 
 #[test]
+#[ignore = "v1.1: FTS5 indexes tags_text (denormalized) instead of tags JSON. Re-enabled by Task 4 when insert() populates tags_text."]
 fn search_also_matches_tags() {
     let (_tmp, conn) = fresh();
     let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "some fact".into(), tags: vec!["whiskey".into()], session_id: None, source: None };

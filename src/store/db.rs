@@ -33,7 +33,10 @@ pub fn migrate(conn: &Connection) -> MemResult<()> {
             crate::store::migrations::apply_v1_initial(conn)?;
             conn.pragma_update(None, "user_version", 1_i64)?;
         }
-        // v2 is added by Task 3; this task only establishes the framework.
+        if version < 2 {
+            crate::store::migrations::apply_v2_v1_1(conn)?;
+            conn.pragma_update(None, "user_version", 2_i64)?;
+        }
         Ok(())
     })();
     match result {
