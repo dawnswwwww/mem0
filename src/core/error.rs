@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::core::memory::Lifecycle;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum MemError {
     #[error("not found: {0}")]
     NotFound(String),
@@ -51,8 +52,21 @@ mod tests {
 
     #[test]
     fn from_rusqlite_error() {
-        let r: rusqlite::Result<()> = Err(rusqlite::Error::InvalidQuery);
-        let e: MemError = r.unwrap_err().into();
+        let e: MemError = rusqlite::Error::InvalidQuery.into();
         assert!(matches!(e, MemError::Storage(_)));
+    }
+
+    #[test]
+    fn from_io_error() {
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "x");
+        let e: MemError = io.into();
+        assert!(matches!(e, MemError::Io(_)));
+    }
+
+    #[test]
+    fn from_json_error() {
+        let je = serde_json::from_str::<i32>("not json").unwrap_err();
+        let e: MemError = je.into();
+        assert!(matches!(e, MemError::Json(_)));
     }
 }
