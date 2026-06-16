@@ -98,3 +98,16 @@ fn open_reopens_existing_file() {
         .unwrap();
     assert_eq!(mode.to_lowercase(), "wal", "pragma must reapply on reopen");
 }
+
+#[test]
+fn migrate_sets_user_version_to_one_on_fresh_db() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("test.db");
+    let conn = mem0::store::db::open(&path).unwrap();
+    mem0::store::db::migrate(&conn).unwrap();
+
+    let v: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 1);
+}

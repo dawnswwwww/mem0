@@ -1,11 +1,13 @@
-pub const V1_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS sessions (
-  id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL UNIQUE,
-  created_at  INTEGER NOT NULL,
-  closed_at   INTEGER
-);
+use rusqlite::Connection;
 
+use crate::core::MemResult;
+
+pub fn apply_v1_initial(conn: &Connection) -> MemResult<()> {
+    conn.execute_batch(V1_SCHEMA)?;
+    Ok(())
+}
+
+pub const V1_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS memories (
   id          TEXT PRIMARY KEY,
   lifecycle   TEXT NOT NULL CHECK (lifecycle IN ('working','episodic','semantic')),
@@ -36,4 +38,11 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
   INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES('delete', old.rowid, old.content, old.tags);
   INSERT INTO memories_fts(rowid, content, tags) VALUES (new.rowid, new.content, new.tags);
 END;
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  created_at  INTEGER NOT NULL,
+  closed_at   INTEGER
+);
 "#;

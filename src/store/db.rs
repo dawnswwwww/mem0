@@ -3,7 +3,6 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags};
 
 use crate::core::MemResult;
-use crate::store::migrations;
 
 pub fn open(path: &Path) -> MemResult<Connection> {
     let conn = Connection::open_with_flags(
@@ -27,9 +26,14 @@ pub fn open(path: &Path) -> MemResult<Connection> {
 }
 
 pub fn migrate(conn: &Connection) -> MemResult<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     conn.execute_batch("BEGIN")?;
     let result = (|| -> MemResult<()> {
-        conn.execute_batch(migrations::V1_SCHEMA)?;
+        if version < 1 {
+            crate::store::migrations::apply_v1_initial(conn)?;
+            conn.pragma_update(None, "user_version", 1_i64)?;
+        }
+        // v2 is added by Task 3; this task only establishes the framework.
         Ok(())
     })();
     match result {
