@@ -153,6 +153,39 @@ pub fn list(conn: &Connection, filter: ListFilter) -> MemResult<Vec<MemoryItem>>
     Ok(out)
 }
 
+pub fn resolve_id(conn: &Connection, id_or_prefix: &str) -> MemResult<uuid::Uuid> {
+    if id_or_prefix.is_empty() {
+        return Err(MemError::InvalidId("empty id".into()));
+    }
+    // Try full UUID first.
+    if id_or_prefix.len() >= 32
+        && let Ok(u) = uuid::Uuid::parse_str(id_or_prefix)
+    {
+        // Verify it exists.
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM memories WHERE id = ?1",
+                rusqlite::params![u.to_string()],
+                |r| r.get::<_, i32>(0).map(|_| true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if exists { return Ok(u); }
+    }
+    // Prefix search — must match exactly one row.
+    let pattern = format!("{}%", id_or_prefix);
+    let mut stmt = conn.prepare("SELECT id FROM memories WHERE id LIKE ?1 ORDER BY id LIMIT 2")?;
+    let rows = stmt.query_map(rusqlite::params![pattern], |r| r.get::<_, String>(0))?;
+    let mut hits: Vec<String> = Vec::new();
+    for r in rows { hits.push(r?); }
+    match hits.len() {
+        0 => Err(MemError::NotFound(id_or_prefix.to_string())),
+        1 => uuid::Uuid::parse_str(&hits[0])
+            .map_err(|_| MemError::InvalidId(hits[0].clone())),
+        _ => Err(MemError::InvalidId(format!("ambiguous prefix: {id_or_prefix}"))),
+    }
+}
+
 pub fn search(conn: &Connection, query: &str, filter: ListFilter) -> MemResult<Vec<MemoryItem>> {
     if query.trim().is_empty() {
         return Err(MemError::InvalidArgument("search query cannot be empty".into()));

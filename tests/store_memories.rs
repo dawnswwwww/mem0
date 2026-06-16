@@ -214,3 +214,42 @@ fn set_lifecycle_unknown_id_returns_not_found() {
     let err = memories::set_lifecycle(&conn, bogus, Lifecycle::Semantic).unwrap_err();
     assert!(matches!(err, mem0::MemError::NotFound(_)));
 }
+
+#[test]
+fn resolve_id_full_uuid() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "x".into(), tags: vec![], session_id: None, source: None };
+    let id = memories::insert(&conn, &d).unwrap();
+    assert_eq!(memories::resolve_id(&conn, &id.to_string()).unwrap(), id);
+}
+
+#[test]
+fn resolve_id_8char_prefix() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "x".into(), tags: vec![], session_id: None, source: None };
+    let id = memories::insert(&conn, &d).unwrap();
+    let prefix = &id.to_string()[..8];
+    assert_eq!(memories::resolve_id(&conn, prefix).unwrap(), id);
+}
+
+#[test]
+fn resolve_id_unknown_returns_not_found() {
+    let (_tmp, conn) = fresh();
+    let err = memories::resolve_id(&conn, "deadbeef").unwrap_err();
+    assert!(matches!(err, mem0::MemError::NotFound(_)));
+}
+
+#[test]
+fn resolve_id_ambiguous_prefix_returns_invalid_id() {
+    let (_tmp, conn) = fresh();
+    let a = uuid::Uuid::from_u128(0x1111_1111_1111_1111_1111_1111_1111_1111);
+    let b = uuid::Uuid::from_u128(0x1111_1111_2222_2222_2222_2222_2222_2222);
+    for id in [a, b] {
+        conn.execute(
+            "INSERT INTO memories (id, lifecycle, content, tags, created_at, updated_at) VALUES (?1, 'semantic', 'x', '[]', 1, 1)",
+            rusqlite::params![id.to_string()],
+        ).unwrap();
+    }
+    let err = memories::resolve_id(&conn, "11111111").unwrap_err();
+    assert!(matches!(err, mem0::MemError::InvalidId(_)), "got {err:?}");
+}
