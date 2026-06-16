@@ -3,6 +3,7 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags};
 
 use crate::core::MemResult;
+use crate::store::migrations;
 
 pub fn open(path: &Path) -> MemResult<Connection> {
     let conn = Connection::open_with_flags(
@@ -23,4 +24,22 @@ pub fn open(path: &Path) -> MemResult<Connection> {
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "busy_timeout", 5000_i64)?;
     Ok(conn)
+}
+
+pub fn migrate(conn: &Connection) -> MemResult<()> {
+    conn.execute_batch("BEGIN")?;
+    let result = (|| -> MemResult<()> {
+        conn.execute_batch(migrations::V1_SCHEMA)?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }

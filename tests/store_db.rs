@@ -1,6 +1,52 @@
 use mem0::store::db;
 
 #[test]
+fn migrate_is_idempotent_and_creates_all_objects() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("test.db");
+    let conn = mem0::store::db::open(&path).unwrap();
+
+    // Run twice — second call must not error or duplicate objects.
+    mem0::store::db::migrate(&conn).unwrap();
+    mem0::store::db::migrate(&conn).unwrap();
+
+    let count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type IN ('table','index','trigger') AND name LIKE 'memories%' OR name = 'sessions'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    // memories table + 2 indexes + 1 fts table + 3 triggers + sessions table = 8
+    assert!(count >= 8, "expected >=8 schema objects, got {count}");
+}
+
+#[test]
+fn fts5_triggers_sync_on_insert() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("test.db");
+    let conn = mem0::store::db::open(&path).unwrap();
+    mem0::store::db::migrate(&conn).unwrap();
+
+    conn.execute(
+        "INSERT INTO memories (id, lifecycle, content, tags, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, '[]', ?4, ?4)",
+        rusqlite::params!["test-id-1", "semantic", "user likes whiskey", 1_000_000_000_i64],
+    )
+    .unwrap();
+
+    // Search via FTS5 should find it
+    let hits: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH 'whiskey'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(hits, 1);
+}
+
+#[test]
 fn open_creates_file_and_enables_wal() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("test.db");
