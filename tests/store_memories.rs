@@ -253,3 +253,19 @@ fn resolve_id_ambiguous_prefix_returns_invalid_id() {
     let err = memories::resolve_id(&conn, "11111111").unwrap_err();
     assert!(matches!(err, mem0::MemError::InvalidId(_)), "got {err:?}");
 }
+
+#[test]
+fn count_by_layer_groups_correctly() {
+    let (_tmp, conn) = fresh();
+    let s = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "s".into(), tags: vec![], session_id: None, source: None };
+    let w = MemoryDraft { lifecycle: Lifecycle::Working,  content: "w".into(), tags: vec![], session_id: None, source: None };
+    let e = MemoryDraft { lifecycle: Lifecycle::Episodic, content: "e".into(), tags: vec![], session_id: None, source: None };
+    memories::insert(&conn, &s).unwrap();
+    memories::insert(&conn, &s).unwrap();
+    memories::insert(&conn, &w).unwrap();
+    memories::insert(&conn, &e).unwrap();
+    let counts = memories::count_by_layer(&conn).unwrap();
+    assert_eq!(counts.get(&Lifecycle::Semantic).copied().unwrap_or(0), 2);
+    assert_eq!(counts.get(&Lifecycle::Working).copied().unwrap_or(0),  1);
+    assert_eq!(counts.get(&Lifecycle::Episodic).copied().unwrap_or(0), 1);
+}

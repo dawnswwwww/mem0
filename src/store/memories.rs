@@ -225,3 +225,19 @@ pub fn search(conn: &Connection, query: &str, filter: ListFilter) -> MemResult<V
     for r in rows { out.push(r?); }
     Ok(out)
 }
+
+pub fn count_by_layer(conn: &Connection) -> MemResult<std::collections::HashMap<Lifecycle, u64>> {
+    let mut stmt = conn.prepare("SELECT lifecycle, count(*) FROM memories GROUP BY lifecycle")?;
+    let rows = stmt.query_map([], |r| {
+        let l: String = r.get(0)?;
+        let c: i64 = r.get(1)?;
+        Ok((l, c))
+    })?;
+    let mut out = std::collections::HashMap::new();
+    for r in rows {
+        let (l, c) = r?;
+        let lc = l.parse::<Lifecycle>()?;
+        out.insert(lc, c as u64);
+    }
+    Ok(out)
+}
