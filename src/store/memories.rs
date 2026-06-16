@@ -128,3 +128,39 @@ pub fn list(conn: &Connection, filter: ListFilter) -> MemResult<Vec<MemoryItem>>
     for r in rows { out.push(r?); }
     Ok(out)
 }
+
+pub fn search(conn: &Connection, query: &str, filter: ListFilter) -> MemResult<Vec<MemoryItem>> {
+    if query.trim().is_empty() {
+        return Err(MemError::InvalidArgument("search query cannot be empty".into()));
+    }
+    // FTS5 MATCH — assume caller has not injected FTS5 operators; quote-escape
+    // the whole query to neutralize syntax. Strip surrounding quotes first.
+    let safe = query.replace('"', "\"\"");
+    let fts_query = format!("\"{safe}\"");
+
+    let mut sql = String::from(
+        "SELECT m.id, m.lifecycle, m.content, m.source, m.session_id, m.tags, m.created_at, m.updated_at, m.accessed_at \
+         FROM memories_fts f \
+         JOIN memories m ON m.rowid = f.rowid \
+         WHERE memories_fts MATCH ?1",
+    );
+    let mut binds: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(fts_query)];
+    if let Some(layer) = filter.layer {
+        sql.push_str(" AND m.lifecycle = ?");
+        binds.push(Box::new(layer.to_string()));
+    }
+    if let Some(sid) = filter.session {
+        sql.push_str(" AND m.session_id = ?");
+        binds.push(Box::new(sid.to_string()));
+    }
+    sql.push_str(" ORDER BY f.rank");
+    let limit = if filter.limit == 0 { 20 } else { filter.limit };
+    sql.push_str(&format!(" LIMIT {}", limit.min(1000)));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| &**b as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), row_to_item)?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r?); }
+    Ok(out)
+}

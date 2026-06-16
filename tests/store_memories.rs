@@ -105,3 +105,50 @@ fn list_respects_limit() {
     let items = memories::list(&conn, ListFilter { limit: 3, ..Default::default() }).unwrap();
     assert_eq!(items.len(), 3);
 }
+
+#[test]
+fn search_finds_matching_content() {
+    let (_tmp, conn) = fresh();
+    let d1 = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "user likes whiskey".into(), tags: vec![], session_id: None, source: None };
+    let d2 = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "user dislikes beer".into(),   tags: vec![], session_id: None, source: None };
+    memories::insert(&conn, &d1).unwrap();
+    memories::insert(&conn, &d2).unwrap();
+    let hits = memories::search(&conn, "whiskey", ListFilter::default()).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].content.contains("whiskey"));
+}
+
+#[test]
+fn search_also_matches_tags() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "some fact".into(), tags: vec!["whiskey".into()], session_id: None, source: None };
+    memories::insert(&conn, &d).unwrap();
+    let hits = memories::search(&conn, "whiskey", ListFilter::default()).unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn search_filters_by_layer() {
+    let (_tmp, conn) = fresh();
+    let s = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "whiskey".into(), tags: vec![], session_id: None, source: None };
+    let w = MemoryDraft { lifecycle: Lifecycle::Working,  content: "whiskey".into(), tags: vec![], session_id: None, source: None };
+    memories::insert(&conn, &s).unwrap();
+    memories::insert(&conn, &w).unwrap();
+    let only_sem = memories::search(&conn, "whiskey", ListFilter { layer: Some(Lifecycle::Semantic), ..Default::default() }).unwrap();
+    assert_eq!(only_sem.len(), 1);
+    assert_eq!(only_sem[0].lifecycle, Lifecycle::Semantic);
+}
+
+#[test]
+fn search_picks_up_updates_via_trigger() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "old text".into(), tags: vec![], session_id: None, source: None };
+    let id = memories::insert(&conn, &d).unwrap();
+    // Direct UPDATE bypasses the store; the trigger should still sync FTS.
+    conn.execute(
+        "UPDATE memories SET content = 'brand new whiskey fact' WHERE id = ?1",
+        rusqlite::params![id.to_string()],
+    ).unwrap();
+    let hits = memories::search(&conn, "whiskey", ListFilter::default()).unwrap();
+    assert_eq!(hits.len(), 1, "au trigger should reindex");
+}
