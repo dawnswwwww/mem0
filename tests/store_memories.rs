@@ -152,3 +152,18 @@ fn search_picks_up_updates_via_trigger() {
     let hits = memories::search(&conn, "whiskey", ListFilter::default()).unwrap();
     assert_eq!(hits.len(), 1, "au trigger should reindex");
 }
+
+#[test]
+fn search_filters_by_since_nanos() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft { lifecycle: Lifecycle::Semantic, content: "whiskey".into(), tags: vec![], session_id: None, source: None };
+    memories::insert(&conn, &d).unwrap();
+    // since_nanos in the future: nothing matches
+    let future = i64::MAX - 1;
+    let hits = memories::search(&conn, "whiskey", ListFilter { since_nanos: Some(future), ..Default::default() }).unwrap();
+    assert!(hits.is_empty(), "future cutoff should match nothing");
+    // since_nanos in the past: 1 match
+    let past = 0;
+    let hits = memories::search(&conn, "whiskey", ListFilter { since_nanos: Some(past), ..Default::default() }).unwrap();
+    assert_eq!(hits.len(), 1);
+}

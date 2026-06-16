@@ -153,6 +153,10 @@ pub fn search(conn: &Connection, query: &str, filter: ListFilter) -> MemResult<V
         sql.push_str(" AND m.session_id = ?");
         binds.push(Box::new(sid.to_string()));
     }
+    if let Some(since) = filter.since_nanos {
+        sql.push_str(" AND m.created_at >= ?");
+        binds.push(Box::new(since));
+    }
     sql.push_str(" ORDER BY f.rank");
     let limit = if filter.limit == 0 { 20 } else { filter.limit };
     sql.push_str(&format!(" LIMIT {}", limit.min(1000)));
