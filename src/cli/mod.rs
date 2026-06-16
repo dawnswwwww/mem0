@@ -63,10 +63,10 @@ pub fn exit_code_for(err: &MemError) -> i32 {
 
 pub fn run(cli: Cli) -> MemResult<()> {
     let path = db_path(&cli);
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     let conn = crate::store::db::open(&path)?;
     crate::store::db::migrate(&conn)?;
