@@ -269,3 +269,57 @@ fn count_by_layer_groups_correctly() {
     assert_eq!(counts.get(&Lifecycle::Working).copied().unwrap_or(0),  1);
     assert_eq!(counts.get(&Lifecycle::Episodic).copied().unwrap_or(0), 1);
 }
+
+#[test]
+fn insert_populates_tags_text() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft {
+        lifecycle:  Lifecycle::Semantic,
+        content:    "fact".into(),
+        tags:       vec!["Preference".into(), "WHISKEY".into()],
+        session_id: None,
+        source:     None,
+    };
+    let id = memories::insert(&conn, &d).unwrap();
+    let tags_text: String = conn
+        .query_row(
+            "SELECT tags_text FROM memories WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tags_text, "preference whiskey");
+}
+
+#[test]
+fn search_finds_tag_without_json_noise() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft {
+        lifecycle:  Lifecycle::Semantic,
+        content:    "fact".into(),
+        tags:       vec!["Preference".into()],
+        session_id: None,
+        source:     None,
+    };
+    memories::insert(&conn, &d).unwrap();
+    // "preference" must hit. Pre-v1.1 fix would have indexed JSON wrapper noise;
+    // post-fix, tags_text is a clean space-separated string.
+    let hits = memories::search(&conn, "preference", ListFilter::default()).unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn search_finds_cjk_substring() {
+    let (_tmp, conn) = fresh();
+    let d = MemoryDraft {
+        lifecycle:  Lifecycle::Semantic,
+        content:    "user 喜欢威士忌".into(),
+        tags:       vec![],
+        session_id: None,
+        source:     None,
+    };
+    memories::insert(&conn, &d).unwrap();
+    // trigram tokenizer requires n>=3; 3-char CJK substring matches.
+    let hits = memories::search(&conn, "威士忌", ListFilter::default()).unwrap();
+    assert_eq!(hits.len(), 1, "CJK substring search via trigram");
+}
