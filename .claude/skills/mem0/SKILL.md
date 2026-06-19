@@ -44,12 +44,12 @@ Three lifecycle tiers, enforced by `core::memory::Lifecycle::can_transition_to`:
 # 1. Write (specify layer; tags and session are optional)
 mem0 add "<content>" --to=working|episodic|semantic [--tag=<tag>]... [--session=<name>]
 
-# 2. List by layer
+# 2. List by layer (no `--tag` filter in v1; tag-aware list is planned for a future release)
 mem0 list --layer=working [--limit=N]
-mem0 list --layer=semantic [--tag=<tag>]
+mem0 list --layer=semantic [--session=<name>] [--since=1d]
 
-# 3. Search (FTS5 keyword + trigram; CJK supported since v1.1.0)
-mem0 search "<query>" [--layer=semantic] [--tag=<tag>] [--limit=N]
+# 3. Search (FTS5 keyword + trigram; CJK supported since v1.1.0; no `--tag` filter in v1)
+mem0 search "<query>" [--layer=semantic] [--session=<name>] [--limit=N]
 
 # 4. Promote (working|episodic → semantic)
 mem0 promote <id>           # default target = semantic
@@ -137,8 +137,8 @@ mem0 list --layer=working
 # → [01abc123] working  正在重构 auth 模块
 # → [01def456] working  JWT 中间件测试还差 2 个
 
-# What's the project context?
-mem0 search "auth" --layer=semantic --tag=project
+# What's the project context? (search for keywords; v1 has no --tag filter)
+mem0 search "auth" --layer=semantic
 # → [02aaa111] semantic  user uses axum 0.7; prefers sqlx over diesel
 ```
 
@@ -153,6 +153,14 @@ mem0 session list
 mem0 search "chose postgres" --layer=episodic --session=schema-v1.1-design
 ```
 
+### Pattern 5: Tag-aware listing via `--json` (workaround for v1)
+
+```bash
+# v1 doesn't support `--tag` filter on `list` or `search`.
+# Workaround: pipe `--json` through `jq` and filter client-side.
+mem0 list --layer=semantic --json | jq '.items[] | select(.tags | index("preference"))'
+```
+
 ## Anti-patterns
 
 - ❌ **Storing transient info in `semantic`**: "currently reading X" should be `working`, not `semantic`. Semantic is for facts that should outlive the task.
@@ -160,6 +168,7 @@ mem0 search "chose postgres" --layer=episodic --session=schema-v1.1-design
 - ❌ **Forgetting to promote at end of session**: leaves orphaned working memory that pollutes future recalls. Always end with `mem0 list --layer=working` and decide each.
 - ❌ **Using `mem0` for ephemeral context**: if you need the value 30 seconds from now, it's already in your context. Don't store it.
 - ❌ **Treating `mem0` as a vector DB**: it's keyword + tag search. For semantic recall, that's v1.2 (deferred).
+- ❌ **Assuming `--tag` filter exists on `list` / `search`**: v1 doesn't have it. Use the `--json | jq` workaround (Pattern 5) or rely on session/layer filters + FTS5 keyword recall.
 
 ## Cheatsheet
 
@@ -177,8 +186,11 @@ mem0 add "..." --to=episodic --session=<name>
 mem0 list --layer=working
 mem0 list --layer=semantic
 
-# Search by concept
-mem0 search "..." [--layer=...] [--tag=...]
+# Search by keyword (no --tag in v1)
+mem0 search "..." [--layer=...] [--session=...]
+
+# Tag-filter via JSON
+mem0 list --layer=semantic --json | jq '.items[] | select(.tags | index("X"))'
 
 # End-of-session cleanup
 mem0 list --layer=working  # decide each
