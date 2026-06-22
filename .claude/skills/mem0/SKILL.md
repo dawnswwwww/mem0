@@ -38,6 +38,27 @@ Three lifecycle tiers, enforced by `core::memory::Lifecycle::can_transition_to`:
 - `episodic` → `semantic`
 - All other transitions: rejected with exit code 2
 
+## Terminology
+
+These words overlap in casual English; in mem0 they mean specific things. Use this table to pick the right word (and therefore the right layer):
+
+| Term | Meaning | mem0 layer | CLI flag |
+|---|---|---|---|
+| **memory** (mem) | Any stored entry — the storage primitive. Three flavors below. | all three | (any `--to=`) |
+| **durable knowledge** (持久知识) | A fact/principle that should outlive the task. Survives sessions. | **`semantic` only** | `--to=semantic` |
+| **scratch** | In-flight task state. Throwaway once task ends. | `working` only | `--to=working` |
+| **event log** (审计记录) | A time-stamped decision or event, grouped by session. | `episodic` only | `--to=episodic` |
+| **fact** (事实) | A single piece of durable knowledge. One row in `semantic`. | `semantic` only | `--to=semantic` |
+
+**Quick test:** if a word you want to use doesn't appear above, translate it:
+
+- "I should remember this for later" → ask: is it durable knowledge (`semantic`), or scratch (`working`), or an event (`episodic`)?
+- "I should remember this fact" → `semantic`
+- "I'll write a note about this" → usually `working` (notes are scratch) or `semantic` if the note IS the durable knowledge
+- "log this decision" → `episodic` with `--session=<name>`
+
+**Rule of thumb:** every `mem0 add` should match exactly ONE row above. If you can't decide, you're probably trying to store scratch as durable knowledge or vice versa — re-read the **Anti-patterns** section.
+
 ## Quick start — 5 core commands
 
 ```bash
