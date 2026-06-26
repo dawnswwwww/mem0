@@ -101,6 +101,28 @@ mem0 session list
 
 If empty: probably a fresh start. Don't fabricate context. Ask the user what they want to do.
 
+### Periodic recall test (every few days or after major changes)
+
+Run a 5-question recall test to verify mem0 is actually serving you. Hit rate < 4/5 means a coverage gap.
+
+```bash
+# 5 questions to ask. Use as-is, or replace with your own project's anchors.
+mem0 search "binary install location"      # Q1: setup anchor
+mem0 search "main architectural decision"  # Q2: design rationale
+mem0 search "<biggest gotcha known>"      # Q3: pain points
+mem0 search "<feature deferred>"           # Q4: roadmap
+mem0 search "<user preference known>"      # Q5: about the human
+
+# If any miss, add it now — the test result IS the gap signal:
+mem0 add "<missing info>" --to=semantic --tag=...
+
+# Spot-check recall shape with --json | jq:
+mem0 list --layer=semantic --json | jq '.items | length, ([.items[].tags[]] | flatten | unique | length)'
+# → first number = total memories; second = unique tag vocabulary size
+```
+
+If hit rate is consistently < 4/5, your mem0 isn't pulling its weight — either (a) you're not writing enough, (b) you're writing without thinking about future recall (see Pattern 6), or (c) the system is fine and the recall questions are wrong.
+
 ### During work — capture
 
 ```bash
@@ -181,6 +203,24 @@ mem0 search "chose postgres" --layer=episodic --session=schema-v1.1-design
 # Workaround: pipe `--json` through `jq` and filter client-side.
 mem0 list --layer=semantic --json | jq '.items[] | select(.tags | index("preference"))'
 ```
+
+### Pattern 6: Write for future recall — include keyword variants
+
+Recall in v1 is FTS5 keyword match only (no semantic search until v1.2+). Future-you (or another agent) will query with **paraphrased** words, not the ones you wrote. Counter by including multiple keyword variants in the content.
+
+```bash
+# ❌ brittle — only matches if query uses exact phrasing
+mem0 add "user prefers 飞书 Base" --to=semantic
+
+# ✅ resilient — matches direct keyword AND likely paraphrases
+mem0 add "user prefers 飞书 Base (lark-base / Base table) for record-keeping" --to=semantic
+
+# Same rule for technical terms:
+# ❌ "uses hnsw index for vector search"
+# ✅ "uses HNSW index (Hierarchical Navigable Small World) for vector search"
+```
+
+Rule of thumb: when writing, ask "if a different agent reads this in 3 months with only the topic, what 3-5 words might they search for?" — include them.
 
 ## Anti-patterns
 
