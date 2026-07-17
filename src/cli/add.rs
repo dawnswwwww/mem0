@@ -77,19 +77,37 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         session_id,
         source:     Some("cli".into()),
     };
-    let id = memories::insert(conn, &draft)?;
-    let item = memories::get(conn, id)?;
 
-    // Optional caller-supplied vector: store it for the new row's rowid.
-    if let Some(vec) = maybe_read_vector()? {
-        let rowid = conn.last_insert_rowid();
-        vectors::upsert(conn, rowid, &vec)?;
-    }
+    // Read the vector FIRST (outside the transaction) so we don't hold BEGIN
+    // across stdin IO. Then insert+upsert atomically: an upsert failure rolls
+    // back the memory row.
+    let vec_opt = maybe_read_vector()?;
+
+    conn.execute_batch("BEGIN")?;
+    let result = (|| -> MemResult<_> {
+        let id = memories::insert(conn, &draft)?;
+        let item = memories::get(conn, id)?;
+        if let Some(vec) = &vec_opt {
+            let rowid = conn.last_insert_rowid();
+            vectors::upsert(conn, rowid, vec)?;
+        }
+        Ok(item)
+    })();
+    let item = match result {
+        Ok(item) => {
+            conn.execute_batch("COMMIT")?;
+            item
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
+        }
+    };
 
     if json {
         println!("{}", serde_json::to_string_pretty(&format::memory_json(&item))?);
     } else {
-        println!("stored {} as {}", &id.to_string()[..8], item.lifecycle);
+        println!("stored {} as {}", &item.id.to_string()[..8], item.lifecycle);
     }
     Ok(())
 }

@@ -92,3 +92,26 @@ fn add_without_stdin_is_unchanged() {
         .output().unwrap();
     assert_eq!(vout.status.code(), Some(3));
 }
+
+#[test]
+fn add_with_mismatched_vector_rolls_back_memory() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("mem0.db").to_string_lossy().to_string();
+    // seed dimension = 4
+    Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "add", "seed", "--to", "semantic"])
+        .write_stdin(r#"{"embedding":[1.0,2.0,3.0,4.0]}"#)
+        .assert().success();
+    // add with a wrong-dimension vector → upsert fails → memory must be rolled back
+    let out = Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "add", "should-not-persist", "--to", "semantic"])
+        .write_stdin(r#"{"embedding":[1.0,2.0,3.0]}"#)
+        .output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "dim mismatch must exit 2");
+    // the rolled-back memory must NOT appear in list
+    let list = Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "list", "--layer=semantic"])
+        .output().unwrap();
+    let list_txt = String::from_utf8_lossy(&list.stdout);
+    assert!(!list_txt.contains("should-not-persist"), "rolled-back memory leaked into list: {list_txt}");
+}

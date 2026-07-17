@@ -258,7 +258,7 @@ Rules:
 - ❌ **Storing durable facts in `working`**: "user prefers dark mode" should be `semantic`. Working memory gets promoted/deleted; facts shouldn't get caught in that churn.
 - ❌ **Forgetting to promote at end of session**: leaves orphaned working memory that pollutes future recalls. Always end with `mem0 list --layer=working` and decide each.
 - ❌ **Using `mem0` for ephemeral context**: if you need the value 30 seconds from now, it's already in your context. Don't store it.
-- ❌ **Treating `mem0` as a vector DB**: it's keyword + tag search. For semantic recall, that's v1.2 (deferred).
+- ❌ **Treating `mem0` as a general-purpose vector DB**: `vsearch` does semantic recall of stored memories via caller-supplied embeddings — it is not a store for arbitrary vectors unrelated to memories.
 - ❌ **Assuming `--tag` filter exists on `list` / `search`**: v1 doesn't have it. Use the `--json | jq` workaround (Pattern 5) or rely on session/layer filters + FTS5 keyword recall.
 
 ## Cheatsheet

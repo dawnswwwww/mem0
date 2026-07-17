@@ -52,6 +52,11 @@ pub fn ensure_vec_table(conn: &Connection, dim: usize) -> MemResult<()> {
                 "CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec \
                  USING vec0(embedding float[{dim}] distance_metric=cosine)"
             ))?;
+            conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS memories_vec_ad AFTER DELETE ON memories BEGIN \
+                   DELETE FROM memories_vec WHERE rowid = old.rowid; \
+                 END",
+            )?;
             write_dim(conn, dim)?;
             Ok(())
         }

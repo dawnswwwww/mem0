@@ -170,3 +170,25 @@ fn search_dim_mismatch_errors() {
         mem0::MemError::EmbeddingDimMismatch { expected: 4, got: 3 }
     ));
 }
+
+#[test]
+fn delete_memory_cascades_to_its_vector() {
+    let (_t, conn) = fresh();
+    conn.execute(
+        "INSERT INTO memories (id, lifecycle, content, tags, tags_text, created_at, updated_at) \
+         VALUES ('00000000-0000-7000-0000-000000000001','semantic','x','[]','',1,1)",
+        [],
+    )
+    .unwrap();
+    let rowid = conn.last_insert_rowid();
+    vectors::upsert(&conn, rowid, &[1.0, 0.0, 0.0, 0.0]).unwrap();
+    let before: i64 = conn
+        .query_row("SELECT count(*) FROM memories_vec WHERE rowid = ?", [rowid], |r| r.get(0))
+        .unwrap();
+    assert_eq!(before, 1);
+    conn.execute("DELETE FROM memories WHERE rowid = ?", [rowid]).unwrap();
+    let after: i64 = conn
+        .query_row("SELECT count(*) FROM memories_vec WHERE rowid = ?", [rowid], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, 0, "deleting a memory must cascade to its vector");
+}
