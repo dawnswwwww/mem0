@@ -34,19 +34,22 @@ fn write_dim(conn: &Connection, dim: usize) -> MemResult<()> {
 }
 
 /// Ensure `memories_vec` exists at dimension `dim`. On first call, record `dim` in
-/// `meta` and create the vec0 table (default cosine distance for `float[N]`).
-/// Subsequent calls must match.
+/// `meta` and create the vec0 table configured for cosine distance. Subsequent
+/// calls must match.
 ///
-/// Note: sqlite-vec 0.1.9 rejects the `distance_metric=cosine` table option with
-/// "Unknown table option"; `float[N]` already defaults to cosine, so we rely on
-/// the default rather than naming it.
+/// sqlite-vec 0.1.9's `float[N]` column type defaults to L2 (Euclidean) distance,
+/// which is unsuitable for embedding similarity. Cosine is requested via the
+/// column-inline `distance_metric=cosine` option (note: inside the column spec,
+/// with NO comma separating it as a table option — `vec0(embedding float[N]
+/// distance_metric=cosine)`, not `vec0(embedding float[N], distance_metric=cosine)`).
+/// The comma form is rejected with "Unknown table option".
 pub fn ensure_vec_table(conn: &Connection, dim: usize) -> MemResult<()> {
     match read_dim(conn)? {
         None => {
             write_dim(conn, dim)?;
             conn.execute_batch(&format!(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec \
-                 USING vec0(embedding float[{dim}])"
+                 USING vec0(embedding float[{dim}] distance_metric=cosine)"
             ))?;
             Ok(())
         }

@@ -67,3 +67,27 @@ fn upsert_stores_and_replaces_vector() {
         .unwrap();
     assert_eq!(count, 1, "upsert must replace, not duplicate");
 }
+
+#[test]
+fn memories_vec_uses_cosine_distance() {
+    let (_t, conn) = fresh();
+    conn.execute(
+        "INSERT INTO memories (id, lifecycle, content, tags, tags_text, created_at, updated_at) \
+         VALUES ('00000000-0000-7000-0000-000000000001','semantic','x','[]','',1,1)",
+        [],
+    )
+    .unwrap();
+    let rowid = conn.last_insert_rowid();
+    vectors::upsert(&conn, rowid, &[1.0, 0.0, 0.0, 0.0]).unwrap();
+
+    // Same direction, different magnitude: cosine distance ~ 0; L2 would be 4.0.
+    let d: f64 = conn
+        .query_row(
+            "SELECT distance FROM memories_vec WHERE embedding MATCH ? \
+             ORDER BY distance LIMIT 1",
+            [&vectors::f32_to_blob(&[5.0, 0.0, 0.0, 0.0])],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(d < 0.001, "expected cosine distance ~0, got {d}");
+}
