@@ -62,6 +62,10 @@ pub fn migrate(conn: &Connection) -> MemResult<()> {
             crate::store::migrations::apply_v2_v1_1(conn)?;
             conn.pragma_update(None, "user_version", 2_i64)?;
         }
+        if version < 3 {
+            crate::store::migrations::apply_v3_vector(conn)?;
+            conn.pragma_update(None, "user_version", 3_i64)?;
+        }
         Ok(())
     })();
     match result {

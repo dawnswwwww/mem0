@@ -77,6 +77,20 @@ pub fn apply_v2_v1_1(conn: &Connection) -> MemResult<()> {
     Ok(())
 }
 
+/// v2 → v3 migration: create the generic `meta` key/value table.
+/// The `memories_vec` vec0 table is NOT created here — its dimension is unknown
+/// at migration time and is fixed lazily on the first caller-supplied vector
+/// (see `store::vectors::ensure_vec_table`). Idempotent via `IF NOT EXISTS`.
+pub fn apply_v3_vector(conn: &Connection) -> MemResult<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meta (\
+           key   TEXT PRIMARY KEY,\
+           value TEXT NOT NULL\
+         )",
+    )?;
+    Ok(())
+}
+
 pub const V1_SCHEMA: &str = r#"
 -- 1. sessions table (parent, referenced by memories.session_id)
 CREATE TABLE IF NOT EXISTS sessions (

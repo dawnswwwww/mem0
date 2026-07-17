@@ -104,7 +104,7 @@ fn migrate_v2_idempotent() {
     db::migrate(&conn).unwrap();
     db::migrate(&conn).unwrap();  // second call must not error
     let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(v, 2);
+    assert_eq!(v, 3);
 }
 
 #[test]
@@ -128,4 +128,31 @@ fn migrate_v2_keeps_existing_memories_intact() {
     assert_eq!(lifecycle, "semantic");
     assert_eq!(source.as_deref(), Some("cli"));
     assert_eq!(tags, "[\"a\"]", "tags JSON must be preserved unchanged");
+}
+
+#[test]
+fn migrate_v2_db_picks_up_v3_meta_table() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("mem0.db");
+    let conn = mem0::store::db::open(&path).unwrap();
+    mem0::store::db::migrate(&conn).unwrap();
+
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    assert_eq!(version, 3);
+
+    let n: i64 = conn
+        .query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='meta'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1, "meta table must exist after v3 migration");
+}
+
+#[test]
+fn migrate_v3_is_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("mem0.db");
+    let conn = mem0::store::db::open(&path).unwrap();
+    mem0::store::db::migrate(&conn).unwrap();
+    mem0::store::db::migrate(&conn).unwrap();
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    assert_eq!(version, 3);
 }

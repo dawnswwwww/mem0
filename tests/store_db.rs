@@ -100,7 +100,7 @@ fn open_reopens_existing_file() {
 }
 
 #[test]
-fn migrate_sets_user_version_to_two_on_fresh_db() {
+fn migrate_sets_user_version_to_latest_on_fresh_db() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("test.db");
     let conn = mem0::store::db::open(&path).unwrap();
@@ -109,7 +109,7 @@ fn migrate_sets_user_version_to_two_on_fresh_db() {
     let v: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 2);
+    assert_eq!(v, 3);
 }
 
 #[test]
