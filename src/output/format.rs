@@ -22,6 +22,27 @@ pub fn memory_json(m: &MemoryItem) -> Value {
     })
 }
 
+/// One-line human rendering with a trailing distance, for `vsearch`.
+pub fn vsearch_line(m: &MemoryItem, distance: f64) -> String {
+    format!("{} (distance={})", memory_human_line(m), distance)
+}
+
+/// Structured rendering with distance, for `vsearch --json`.
+pub fn memory_json_with_distance(m: &MemoryItem, distance: f64) -> Value {
+    let mut v = memory_json(m);
+    v["distance"] = json!(distance);
+    v
+}
+
+/// JSON list wrapper for vsearch hits, each carrying its distance.
+pub fn vsearch_json(hits: &[(&MemoryItem, f64)]) -> Value {
+    let arr: Vec<Value> = hits
+        .iter()
+        .map(|(m, d)| memory_json_with_distance(m, *d))
+        .collect();
+    json!({ "items": arr, "count": arr.len() })
+}
+
 pub fn list_json(items: &[MemoryItem]) -> Value {
     let arr: Vec<Value> = items.iter().map(memory_json).collect();
     json!({ "items": arr, "count": arr.len() })
@@ -94,5 +115,20 @@ mod tests {
         let v = error_json(&e);
         assert_eq!(v["error"]["code"], "NotFound");
         assert!(v["error"]["message"].as_str().unwrap().contains("abc12345"));
+    }
+
+    #[test]
+    fn vsearch_line_includes_distance() {
+        let m = sample("11111111-2222-3333-4444-555555555555", Lifecycle::Semantic, "x");
+        let line = vsearch_line(&m, 0.123);
+        assert!(line.contains("x"));
+        assert!(line.contains("0.123"), "missing distance: {line}");
+    }
+
+    #[test]
+    fn json_with_distance_has_distance_field() {
+        let m = sample("11111111-2222-3333-4444-555555555555", Lifecycle::Semantic, "x");
+        let v = memory_json_with_distance(&m, 0.5);
+        assert_eq!(v["distance"], 0.5);
     }
 }
