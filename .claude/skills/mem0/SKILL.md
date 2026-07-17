@@ -1,3 +1,8 @@
+---
+name: mem0
+description: 'How to use mem0 — a local-first CLI giving an AI agent a three-tier memory store (working / episodic / semantic) backed by SQLite + FTS5. Use whenever the agent should persist or recall durable knowledge across sessions: at the start of a task to recall prior work, when the user says "remember/save/note this", "记一下", "上次", "where were we", before context is compacted or a session ends, or before a non-trivial decision worth auditing. Do not use for ephemeral lookups or info already in context.'
+---
+
 # mem0 — Layered memory for AI agents
 
 > Local-first CLI that gives an AI agent a three-tier memory store:
@@ -221,6 +226,31 @@ mem0 add "user prefers 飞书 Base (lark-base / Base table) for record-keeping" 
 ```
 
 Rule of thumb: when writing, ask "if a different agent reads this in 3 months with only the topic, what 3-5 words might they search for?" — include them.
+
+## Vector search (`vsearch`) — semantic recall
+
+`vsearch` does cosine nearest-neighbour over memories that have a stored vector.
+mem0 never computes embeddings — **the caller does**. Compute an embedding for the
+text you want to find (and for memories when storing them), then pipe the vector as
+`{"embedding":[...]}` on stdin.
+
+```bash
+# store a memory WITH a vector (vector is optional; omit to store text-only)
+echo '{"embedding":[...your embedding...]}' | mem0 add "user prefers dark mode" --to=semantic
+
+# semantic search: pipe the query vector
+echo '{"embedding":[...query embedding...]}' | mem0 vsearch --layer=semantic --limit=10
+```
+
+Rules:
+- The dimension is fixed by the **first** vector mem0 sees; all later vectors (add or
+  vsearch) must match it, else exit code 2.
+- `search` (FTS5 keywords) and `vsearch` (vector) are independent — use either or both.
+- Memories added without a vector never appear in `vsearch` (they still appear in
+  `search`/`list`). To make a memory vector-searchable, the embedding must be supplied
+  at `add` time.
+- Changing embedding model / dimension is manual: clear `memories_vec` and
+  `meta.embedding_dim`, then re-add with the new model's vectors.
 
 ## Anti-patterns
 
