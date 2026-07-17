@@ -91,3 +91,14 @@ fn memories_vec_uses_cosine_distance() {
         .unwrap();
     assert!(d < 0.001, "expected cosine distance ~0, got {d}");
 }
+
+#[test]
+fn ensure_vec_table_rejects_zero_dim_without_poisoning_meta() {
+    let (_t, conn) = fresh();
+    let err = vectors::ensure_vec_table(&conn, 0);
+    assert!(err.is_err(), "dim=0 must error");
+    // meta must NOT be poisoned: a subsequent valid init must still succeed.
+    assert!(dim(&conn).is_none(), "meta.embedding_dim must not be set after a failed init");
+    vectors::ensure_vec_table(&conn, 4).unwrap();
+    assert_eq!(dim(&conn), Some(4));
+}

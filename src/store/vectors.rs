@@ -14,14 +14,15 @@ pub fn f32_to_blob(v: &[f32]) -> Vec<u8> {
 }
 
 fn read_dim(conn: &Connection) -> MemResult<Option<usize>> {
-    let s: Option<String> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = ?1",
-            params![DIM_KEY],
-            |r| r.get(0),
-        )
-        .ok();
-    Ok(s.and_then(|v| v.parse::<usize>().ok()))
+    match conn.query_row(
+        "SELECT value FROM meta WHERE key = ?1",
+        params![DIM_KEY],
+        |r| r.get::<_, String>(0),
+    ) {
+        Ok(s) => Ok(s.parse::<usize>().ok()),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn write_dim(conn: &Connection, dim: usize) -> MemResult<()> {
@@ -46,11 +47,11 @@ fn write_dim(conn: &Connection, dim: usize) -> MemResult<()> {
 pub fn ensure_vec_table(conn: &Connection, dim: usize) -> MemResult<()> {
     match read_dim(conn)? {
         None => {
-            write_dim(conn, dim)?;
             conn.execute_batch(&format!(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec \
                  USING vec0(embedding float[{dim}] distance_metric=cosine)"
             ))?;
+            write_dim(conn, dim)?;
             Ok(())
         }
         Some(existing) if existing == dim => Ok(()),
