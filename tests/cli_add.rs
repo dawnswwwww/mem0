@@ -1,4 +1,6 @@
 use assert_cmd::Command;
+use serde_json::Value;
+use tempfile::TempDir;
 
 fn bin() -> Command { Command::cargo_bin("mem0").unwrap() }
 
@@ -52,4 +54,41 @@ fn add_missing_to_flag_errors() {
         .assert()
         .failure()
         .code(2);
+}
+
+#[test]
+fn add_with_vector_then_vsearch_recalls_it() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("mem0.db").to_string_lossy().to_string();
+
+    Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "add", "user likes whiskey", "--to", "semantic"])
+        .write_stdin(r#"{"embedding":[1.0,0.0,0.0,0.0]}"#)
+        .assert().success();
+
+    let out = Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "--json", "vsearch"])
+        .write_stdin(r#"{"embedding":[0.9,0.1,0.0,0.0]}"#)
+        .output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["count"], 1);
+    assert!(v["items"][0]["content"].as_str().unwrap().contains("whiskey"));
+}
+
+#[test]
+fn add_without_stdin_is_unchanged() {
+    // No piped stdin ⇒ text-only add, exactly as before.
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("mem0.db").to_string_lossy().to_string();
+    let out = Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "add", "plain text memory", "--to", "working"])
+        .output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    // No vector indexed ⇒ vsearch reports not initialized.
+    let vout = Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "vsearch"])
+        .write_stdin(r#"{"embedding":[1.0,2.0,3.0,4.0]}"#)
+        .output().unwrap();
+    assert_eq!(vout.status.code(), Some(3));
 }
