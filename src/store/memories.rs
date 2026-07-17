@@ -34,6 +34,18 @@ pub struct ListFilter {
     pub limit:        u32,
 }
 
+impl ListFilter {
+    /// A filter with no layer/session/time constraint and the given result cap.
+    pub fn default_limit(limit: u32) -> Self {
+        ListFilter {
+            layer: None,
+            session: None,
+            since_nanos: None,
+            limit,
+        }
+    }
+}
+
 fn now_nanos() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

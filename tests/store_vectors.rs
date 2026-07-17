@@ -1,4 +1,9 @@
-use mem0::store::{db, vectors};
+use mem0::core::memory::Lifecycle;
+use mem0::store::{
+    db,
+    memories::{self, ListFilter, MemoryDraft},
+    vectors,
+};
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -101,4 +106,67 @@ fn ensure_vec_table_rejects_zero_dim_without_poisoning_meta() {
     assert!(dim(&conn).is_none(), "meta.embedding_dim must not be set after a failed init");
     vectors::ensure_vec_table(&conn, 4).unwrap();
     assert_eq!(dim(&conn), Some(4));
+}
+
+fn add_mem(conn: &Connection, lc: Lifecycle, content: &str) -> i64 {
+    let _ = memories::insert(
+        conn,
+        &MemoryDraft {
+            lifecycle: lc,
+            content: content.into(),
+            tags: vec![],
+            session_id: None,
+            source: None,
+        },
+    )
+    .unwrap();
+    conn.last_insert_rowid()
+}
+
+#[test]
+fn search_returns_nearest_first() {
+    let (_t, conn) = fresh();
+    let r1 = add_mem(&conn, Lifecycle::Semantic, "close");
+    let r2 = add_mem(&conn, Lifecycle::Semantic, "nearby");
+    let r3 = add_mem(&conn, Lifecycle::Semantic, "far");
+    vectors::upsert(&conn, r1, &[1.0, 0.0, 0.0, 0.0]).unwrap();
+    vectors::upsert(&conn, r2, &[0.9, 0.1, 0.0, 0.0]).unwrap();
+    vectors::upsert(&conn, r3, &[0.0, 0.0, 0.0, 1.0]).unwrap();
+
+    let hits = vectors::search(&conn, &[1.0, 0.0, 0.0, 0.0], ListFilter::default_limit(2)).unwrap();
+    let contents: Vec<&str> = hits.iter().map(|(m, _)| m.content.as_str()).collect();
+    assert_eq!(contents, vec!["close", "nearby"]); // "far" truncated by limit=2 after cosine ordering
+}
+
+#[test]
+fn search_layer_filter_excludes_other_layers() {
+    let (_t, conn) = fresh();
+    let rs = add_mem(&conn, Lifecycle::Semantic, "s");
+    let rw = add_mem(&conn, Lifecycle::Working, "w");
+    vectors::upsert(&conn, rs, &[1.0, 0.0, 0.0, 0.0]).unwrap();
+    vectors::upsert(&conn, rw, &[1.0, 0.0, 0.0, 0.0]).unwrap();
+
+    let mut f = ListFilter::default_limit(10);
+    f.layer = Some(Lifecycle::Semantic);
+    let hits = vectors::search(&conn, &[1.0, 0.0, 0.0, 0.0], f).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].0.lifecycle, Lifecycle::Semantic);
+}
+
+#[test]
+fn search_before_any_vector_is_vector_not_initialized() {
+    let (_t, conn) = fresh();
+    let err = vectors::search(&conn, &[1.0, 2.0, 3.0, 4.0], ListFilter::default_limit(5)).unwrap_err();
+    assert!(matches!(err, mem0::MemError::VectorNotInitialized));
+}
+
+#[test]
+fn search_dim_mismatch_errors() {
+    let (_t, conn) = fresh();
+    vectors::ensure_vec_table(&conn, 4).unwrap();
+    let err = vectors::search(&conn, &[1.0, 2.0, 3.0], ListFilter::default_limit(5)).unwrap_err();
+    assert!(matches!(
+        err,
+        mem0::MemError::EmbeddingDimMismatch { expected: 4, got: 3 }
+    ));
 }

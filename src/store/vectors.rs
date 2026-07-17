@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection};
 
 use crate::core::error::{MemError, MemResult};
+use crate::store::memories::{row_to_item, ListFilter, MemoryItem};
 
 const DIM_KEY: &str = "embedding_dim";
 
@@ -79,4 +80,92 @@ pub fn upsert(conn: &Connection, rowid: i64, vec: &[f32]) -> MemResult<()> {
         params![rowid, f32_to_blob(vec)],
     )?;
     Ok(())
+}
+
+/// Run cosine KNN for `query`, then filter by layer/session and return up to
+/// `filter.limit` hits as `(MemoryItem, distance)`. Lower distance = nearer.
+///
+/// Strategy (per spec): a pure KNN fetch over an expanded window, then a single
+/// `memories` lookup (selecting rowid) that applies layer/session filters. This
+/// keeps the KNN query in the exact form sqlite-vec requires and reuses the
+/// existing filter columns.
+pub fn search(
+    conn: &Connection,
+    query: &[f32],
+    filter: ListFilter,
+) -> MemResult<Vec<(MemoryItem, f64)>> {
+    let dim = read_dim(conn)?.ok_or(MemError::VectorNotInitialized)?;
+    if dim != query.len() {
+        return Err(MemError::EmbeddingDimMismatch {
+            expected: dim,
+            got: query.len(),
+        });
+    }
+
+    let knn_limit = filter.limit.saturating_mul(5).clamp(100, 1000);
+
+    // 1. Pure KNN over the expanded window. Scoped so the statement (which borrows
+    //    conn) is dropped before we re-borrow conn for the candidate fetch below.
+    let knn: Vec<(i64, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT rowid, distance FROM memories_vec \
+             WHERE embedding MATCH ?1 ORDER BY distance LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![f32_to_blob(query), knn_limit], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    if knn.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 2. One filtered fetch of the candidate memories, selecting rowid so distance
+    //    can be rejoined in Rust without a second query per row (and without
+    //    re-borrowing conn while iterating).
+    let placeholders = (0..knn.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+    let mut sql = String::from(
+        "SELECT rowid, id, lifecycle, content, source, session_id, tags, \
+                created_at, updated_at, accessed_at \
+         FROM memories WHERE rowid IN (",
+    );
+    sql.push_str(&placeholders);
+    sql.push(')');
+    let mut binds: Vec<Box<dyn rusqlite::ToSql>> = knn
+        .iter()
+        .map(|(rowid, _)| Box::new(*rowid) as Box<dyn rusqlite::ToSql>)
+        .collect();
+    if let Some(layer) = filter.layer {
+        sql.push_str(" AND lifecycle = ?");
+        binds.push(Box::new(layer.to_string()));
+    }
+    if let Some(sid) = filter.session {
+        sql.push_str(" AND session_id = ?");
+        binds.push(Box::new(sid.to_string()));
+    }
+
+    let dist: std::collections::HashMap<i64, f64> =
+        knn.iter().map(|(r, d)| (*r, *d)).collect();
+    let mut stmt2 = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> =
+        binds.iter().map(|b| &**b as &dyn rusqlite::ToSql).collect();
+    let rows = stmt2.query_map(rusqlite::params_from_iter(params), |row| {
+        let rowid: i64 = row.get("rowid")?;
+        let item = row_to_item(row)?;
+        Ok((rowid, item))
+    })?;
+    let mut out: Vec<(MemoryItem, f64)> = Vec::new();
+    for r in rows {
+        let (rowid, item) = r?;
+        if let Some(d) = dist.get(&rowid) {
+            out.push((item, *d));
+        }
+    }
+
+    // 3. Preserve KNN distance order (row order from the filtered fetch is not
+    //    guaranteed to be by distance), then cap.
+    out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let limit = if filter.limit == 0 { 20 } else { filter.limit };
+    out.truncate(limit.min(1000) as usize);
+    Ok(out)
 }
