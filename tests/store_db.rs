@@ -111,3 +111,15 @@ fn migrate_sets_user_version_to_two_on_fresh_db() {
         .unwrap();
     assert_eq!(v, 2);
 }
+
+#[test]
+fn sqlite_vec_is_available_after_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("mem0.db");
+    let conn = mem0::store::db::open(&path).unwrap();
+    mem0::store::db::migrate(&conn).unwrap();
+    let version: String = conn
+        .query_row("SELECT vec_version()", [], |r| r.get(0))
+        .expect("vec_version() should exist after open");
+    assert!(version.starts_with("v"), "got: {version}");
+}

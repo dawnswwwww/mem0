@@ -4,7 +4,27 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::core::MemResult;
 
+use std::sync::Once;
+
+/// Register the sqlite-vec extension globally. Idempotent via `Once`. Must run
+/// before any `Connection::open_*`; `open()` calls it first. `sqlite3_auto_extension`
+/// makes every subsequently opened connection auto-load the `vec0` module.
+fn install_sqlite_vec() {
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| unsafe {
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut std::os::raw::c_char,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> std::os::raw::c_int,
+        >(sqlite_vec::sqlite3_vec_init as *const ())));
+    });
+}
+
 pub fn open(path: &Path) -> MemResult<Connection> {
+    install_sqlite_vec();
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE
