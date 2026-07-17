@@ -46,7 +46,7 @@ fn parse_lifecycle(s: &str) -> MemResult<Lifecycle> {
     s.parse()
 }
 
-fn row_to_item(row: &Row<'_>) -> rusqlite::Result<MemoryItem> {
+pub(crate) fn row_to_item(row: &Row<'_>) -> rusqlite::Result<MemoryItem> {
     let id_s: String = row.get("id")?;
     let lifecycle_s: String = row.get("lifecycle")?;
     let session_s: Option<String> = row.get("session_id")?;
