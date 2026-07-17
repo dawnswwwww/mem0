@@ -1,25 +1,30 @@
 use std::path::Path;
+use std::sync::Once;
 
 use rusqlite::{Connection, OpenFlags};
 
 use crate::core::MemResult;
 
-use std::sync::Once;
-
 /// Register the sqlite-vec extension globally. Idempotent via `Once`. Must run
-/// before any `Connection::open_*`; `open()` calls it first. `sqlite3_auto_extension`
-/// makes every subsequently opened connection auto-load the `vec0` module.
+/// before any `Connection::open_*`; `open()` calls it first.
+/// `register_auto_extension` makes every subsequently opened connection
+/// auto-load the `vec0` module and surfaces registration failure immediately.
 fn install_sqlite_vec() {
     static INSTALL: Once = Once::new();
-    INSTALL.call_once(|| unsafe {
-        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
-            *const (),
-            unsafe extern "C" fn(
-                *mut rusqlite::ffi::sqlite3,
-                *mut *mut std::os::raw::c_char,
-                *const rusqlite::ffi::sqlite3_api_routines,
-            ) -> std::os::raw::c_int,
-        >(sqlite_vec::sqlite3_vec_init as *const ())));
+    INSTALL.call_once(|| {
+        // SAFETY: `register_auto_extension` is unsafe because the auto-extension
+        // must not open/close dbs or reentrantly mutate the extension list;
+        // sqlite-vec's `sqlite3_vec_init` does neither. The transmute widens
+        // the no-arg extern "C" declaration to the documented SQLite init
+        // signature (`RawAutoExtension`).
+        unsafe {
+            rusqlite::auto_extension::register_auto_extension(
+                std::mem::transmute::<*const (), rusqlite::auto_extension::RawAutoExtension>(
+                    sqlite_vec::sqlite3_vec_init as *const (),
+                ),
+            )
+        }
+        .expect("register sqlite-vec auto extension");
     });
 }
 
