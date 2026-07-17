@@ -56,6 +56,9 @@ pub fn exit_code_for(err: &MemError) -> i32 {
         MemError::InvalidId(_)         => 5,
         MemError::NotFound(_)          => 3,
         MemError::Storage(_)           => 4,
+        MemError::EmbeddingDimMismatch { .. } => 2,
+        MemError::EmbeddingParseError(_)    => 2,
+        MemError::VectorNotInitialized      => 3,
         MemError::InvalidTransition {..} => 2,
         _ => 1,
     }

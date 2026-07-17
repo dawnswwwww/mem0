@@ -25,6 +25,15 @@ pub enum MemError {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("embedding dimension mismatch: expected {expected}, got {got}")]
+    EmbeddingDimMismatch { expected: usize, got: usize },
+
+    #[error("embedding parse error: {0}")]
+    EmbeddingParseError(String),
+
+    #[error("vector index not initialized: add a memory with a vector first")]
+    VectorNotInitialized,
 }
 
 pub type MemResult<T> = std::result::Result<T, MemError>;
