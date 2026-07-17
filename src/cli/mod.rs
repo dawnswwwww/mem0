@@ -11,6 +11,7 @@ pub mod list;
 pub mod promote;
 pub mod search;
 pub mod session;
+pub mod vsearch;
 pub mod show;
 pub mod stats;
 
@@ -34,6 +35,7 @@ pub enum Command {
     Add      (crate::cli::add::Args),
     List     (crate::cli::list::Args),
     Search   (crate::cli::search::Args),
+    Vsearch  (crate::cli::vsearch::Args),
     Show     (crate::cli::show::Args),
     Promote  (crate::cli::promote::Args),
     Delete   (crate::cli::delete::Args),
@@ -78,6 +80,7 @@ pub fn run(cli: Cli) -> MemResult<()> {
         Command::Add(a)     => crate::cli::add::run(&conn, a, cli.json),
         Command::List(a)    => crate::cli::list::run(&conn, a, cli.json),
         Command::Search(a)  => crate::cli::search::run(&conn, a, cli.json),
+        Command::Vsearch(a) => crate::cli::vsearch::run(&conn, a, cli.json),
         Command::Show(a)    => crate::cli::show::run(&conn, a, cli.json),
         Command::Promote(a) => crate::cli::promote::run(&conn, a, cli.json),
         Command::Delete(a)  => crate::cli::delete::run(&conn, a, cli.json),
