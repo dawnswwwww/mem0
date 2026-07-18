@@ -61,6 +61,9 @@ pub fn exit_code_for(err: &MemError) -> i32 {
         MemError::EmbeddingDimMismatch { .. } => 2,
         MemError::EmbeddingParseError(_)    => 2,
         MemError::VectorNotInitialized      => 3,
+        MemError::EmbedderInitError(_)        => 2,
+        MemError::EmbedderInferenceError(_)   => 2,
+        MemError::EmbedFeatureNotEnabled      => 2,
         MemError::InvalidTransition {..} => 2,
         _ => 1,
     }

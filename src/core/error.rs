@@ -34,6 +34,15 @@ pub enum MemError {
 
     #[error("vector index not initialized: add a memory with a vector first")]
     VectorNotInitialized,
+
+    #[error("embedder init failed: {0}")]
+    EmbedderInitError(String),
+
+    #[error("embedder inference failed: {0}")]
+    EmbedderInferenceError(String),
+
+    #[error("embedding support is not compiled in (rebuild with --features embed)")]
+    EmbedFeatureNotEnabled,
 }
 
 pub type MemResult<T> = std::result::Result<T, MemError>;
@@ -77,5 +86,15 @@ mod tests {
         let je = serde_json::from_str::<i32>("not json").unwrap_err();
         let e: MemError = je.into();
         assert!(matches!(e, MemError::Json(_)));
+    }
+
+    #[test]
+    fn embed_errors_display() {
+        assert!(MemError::EmbedderInitError("boom".into())
+            .to_string().contains("boom"));
+        assert!(MemError::EmbedderInferenceError("x".into())
+            .to_string().contains("x"));
+        assert!(MemError::EmbedFeatureNotEnabled
+            .to_string().contains("not compiled in"));
     }
 }
