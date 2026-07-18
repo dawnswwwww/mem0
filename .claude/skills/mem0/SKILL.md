@@ -288,6 +288,31 @@ mem0 list --layer=working  # decide each
 mem0 promote <id>          # or delete
 ```
 
+## Embedding (built-in, opt-in `embed` feature)
+
+When mem0 is built with the `embed` feature (`cargo build --features embed`),
+`add` and `vsearch` embed text locally on CPU — no external embedder needed.
+
+- `mem0 add "user likes whiskey" --to=semantic`   # auto-embeds (passage)
+- `mem0 vsearch "drink preferences" --layer=semantic`  # auto-embeds (query)
+- `mem0 embed "any text"`                          # prints {"embedding":...,"dim":384,"model":...}
+
+Opt out of auto-embedding:
+- `--no-embed` on a single command (text-only `add`).
+- `MEM0_EMBED=off` environment variable (disables auto-embed globally for that shell).
+
+Low-level path (still works, highest precedence — use this with an external embedder):
+- `echo '{"embedding":[...]}' | mem0 add "x" --to=semantic`
+- `echo '{"embedding":[...]}' | mem0 vsearch --layer=semantic`
+- `my-embed "q" | mem0 vsearch`  (a piped vector always wins over auto-embed)
+
+Model: default `multilingual-e5-small` (384-dim); override with `--model`
+(`all-MiniLM-L6-v2`, `bge-small-en-v1.5`, `bge-small-zh-v1.5`, `nomic-embed-text-v1.5`).
+
+Model location (searched in order): `$MEM0_EMBED_MODEL_DIR` → `<exe_dir>/models/` →
+`<cache_dir>/mem0/fastembed/` → lazy download. Release builds ship the model beside
+the binary so the common path is offline.
+
 ## Notes
 
 - Binary lives at `~/.cargo/bin/mem0` (after `cargo install --path /path/to/mem0`).
