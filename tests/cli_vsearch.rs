@@ -58,3 +58,20 @@ fn vsearch_dim_mismatch_exits_2() {
         .output().unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn text_query_without_feature_or_vector_errors() {
+    // On the default build, a positional query with no piped vector and no embedder
+    // must fail (exit != 0), not silently search a nonexistent vector. Under the
+    // `embed` feature the same invocation would try to call the embedder (network),
+    // so we skip the whole run there rather than hang.
+    if cfg!(feature = "embed") {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let db = db_arg(&dir);
+    Command::cargo_bin("mem0").unwrap()
+        .args(["--db", &db, "vsearch", "--layer=semantic", "some query"])
+        .ok()
+        .expect_err("should fail without a vector source");
+}
