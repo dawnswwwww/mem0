@@ -17,12 +17,18 @@ offline, fetch the default model into `<release_dir>/models/multilingual-e5-smal
    `models--intfloat--multilingual-e5-small`.
 4. Archive `target/release/{mem0, models/}` together.
 
-**`HF_HOME` caveat:** fastembed's `pull_from_hf` prefers `HF_HOME` over the
-`with_cache_dir(...)` value, so if the end-user has `HF_HOME` set, the shipped
-sidecar under `<exe_dir>/models/` is bypassed (fastembed will look in `$HF_HOME`
-instead). This is harmless — the binary still works (lazy download fallback) —
-but document it. For a guaranteed-offline sidecar, advise users to leave
-`HF_HOME` unset, or have the CLI unset `HF_HOME` for the embed path (out of
-scope for v1.3). `HF_HUB_OFFLINE=1` + a fully-primed cache loads with no network.
+**Offline sidecar is enforced by the CLI.** When `embed::store::init` resolves a
+sidecar (`$MEM0_EMBED_MODEL_DIR` / `<exe_dir>/models/` / cache dir), it sets
+`HF_HUB_OFFLINE=1` and clears `HF_HOME` for the process before constructing the
+`TextEmbedding`. This makes the sidecar authoritative and fully offline — fastembed
+neither pings the HF API to resolve the revision nor lets a stray `HF_HOME` override
+`with_cache_dir`. End users need only point at the sidecar (e.g.
+`export MEM0_EMBED_MODEL_DIR=...`); no `HF_HUB_OFFLINE` on their part.
+
+**Primed behind a firewall:** if the build/prime machine cannot reach `huggingface.co`,
+prime the cache via a mirror instead of step 2 — e.g. with the `hf` CLI's bundled
+`huggingface_hub` (anonymous, `token=False`):
+`HF_ENDPOINT=https://hf-mirror.com python -c "from huggingface_hub import snapshot_download; snapshot_download('intfloat/multilingual-e5-small', allow_patterns=['onnx/model.onnx','tokenizer.json','config.json','special_tokens_map.json','tokenizer_config.json'], cache_dir='target/release/models', token=False)"`
+then proceed to step 4.
 
 The binary still works without the sidecar (falls back to lazy download).

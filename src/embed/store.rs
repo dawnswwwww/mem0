@@ -48,13 +48,26 @@ pub fn resolve(model: ModelChoice, roots: &SearchRoots) -> Option<PathBuf> {
 }
 
 /// Initialise the model for this invocation. If a sidecar cache dir resolves, point
-/// fastembed at it (offline); otherwise fall back to fastembed's default download.
+/// fastembed at it and pin hf-hub to it offline (no network); otherwise fall back to
+/// fastembed's default download.
 pub fn init(model: ModelChoice) -> MemResult<fastembed::TextEmbedding> {
-    let cache_dir = resolve(model, &SearchRoots::from_env());
-    let mut opts = fastembed::TextInitOptions::new(model.to_fastembed())
+    let opts = fastembed::TextInitOptions::new(model.to_fastembed())
         .with_show_download_progress(true);
-    if let Some(dir) = cache_dir {
-        opts = opts.with_cache_dir(dir);
+
+    if let Some(dir) = resolve(model, &SearchRoots::from_env()) {
+        // A sidecar resolved: make it authoritative and fully offline. Without this,
+        // hf-hub would (a) hit the HF API to resolve the revision and (b) let
+        // `$HF_HOME` override `with_cache_dir` — either can hang/fail on a
+        // firewalled machine even though the model is right here.
+        // SAFETY: mem0 is single-threaded at CLI startup, before any embed work; no
+        // concurrent getenv can race these mutations.
+        unsafe {
+            std::env::set_var("HF_HUB_OFFLINE", "1");
+            std::env::remove_var("HF_HOME");
+        }
+        return fastembed::TextEmbedding::try_new(opts.with_cache_dir(dir))
+            .map_err(|e| MemError::EmbedderInitError(e.to_string()));
     }
+
     fastembed::TextEmbedding::try_new(opts).map_err(|e| MemError::EmbedderInitError(e.to_string()))
 }
