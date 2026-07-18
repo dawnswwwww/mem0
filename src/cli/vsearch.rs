@@ -79,7 +79,7 @@ fn resolve_query(args: &Args) -> MemResult<Vec<f32>> {
         // No embedder compiled in: a text query is unusable. (The --embed flag is
         // accepted for help-stability but cannot do work; the error is the same.)
         let _ = args.embed;
-        return Err(MemError::EmbedFeatureNotEnabled);
+        Err(MemError::EmbedFeatureNotEnabled)
     }
     #[cfg(feature = "embed")]
     {

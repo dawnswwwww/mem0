@@ -45,7 +45,7 @@ pub fn run(_conn: &Connection, args: Args, json: bool) -> MemResult<()> {
     #[cfg(not(feature = "embed"))]
     {
         let _ = (args.as_passage, args.model);
-        return Err(MemError::EmbedFeatureNotEnabled);
+        Err(MemError::EmbedFeatureNotEnabled)
     }
 
     #[cfg(feature = "embed")]

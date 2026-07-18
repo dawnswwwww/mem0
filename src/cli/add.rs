@@ -100,41 +100,27 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         return Err(MemError::EmbedFeatureNotEnabled);
     }
 
-    let vec_opt: Option<Vec<f32>> = {
-        // 1. piped stdin vector wins.
-        let piped = maybe_read_vector()?;
-        if piped.is_some() && args.embed {
-            return Err(MemError::InvalidArgument(
-                "piped vector and --embed both request a vector source".into(),
-            ));
-        }
-        match piped {
-            Some(v) => Some(v),
-            None => {
-                // 2/3/4/5: decide whether to auto-embed.
-                #[cfg(feature = "embed")]
-                {
-                    if should_embed(args.embed, args.no_embed) {
-                        let model = match args.model.as_deref() {
-                            Some(n) => crate::embed::ModelChoice::from_name(n)?,
-                            None => crate::embed::ModelChoice::DEFAULT,
-                        };
-                        Some(crate::embed::embed_text(
-                            &content,
-                            crate::embed::Role::Passage,
-                            model,
-                        )?)
-                    } else {
-                        None
-                    }
-                }
-                #[cfg(not(feature = "embed"))]
-                {
-                    None
-                }
-            }
-        }
+    // --- vector-source precedence (spec §5): piped vector wins, else auto-embed ---
+    let piped = maybe_read_vector()?;
+    if piped.is_some() && args.embed {
+        return Err(MemError::InvalidArgument(
+            "piped vector and --embed both request a vector source".into(),
+        ));
+    }
+    // Embed only when there is no piped vector and policy allows (§5 rules 2–5).
+    #[cfg(feature = "embed")]
+    let auto: Option<Vec<f32>> = if piped.is_none() && should_embed(args.embed, args.no_embed) {
+        let model = match args.model.as_deref() {
+            Some(n) => crate::embed::ModelChoice::from_name(n)?,
+            None => crate::embed::ModelChoice::DEFAULT,
+        };
+        Some(crate::embed::embed_text(&content, crate::embed::Role::Passage, model)?)
+    } else {
+        None
     };
+    #[cfg(not(feature = "embed"))]
+    let auto: Option<Vec<f32>> = None;
+    let vec_opt: Option<Vec<f32>> = piped.or(auto);
 
     let draft = MemoryDraft {
         lifecycle:  args.to,
@@ -178,8 +164,5 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
 fn should_embed(embed: bool, no_embed: bool) -> bool {
     if embed { return true; }
     if no_embed { return false; }
-    match std::env::var("MEM0_EMBED") {
-        Ok(v) if v.eq_ignore_ascii_case("off") => false,
-        _ => true,
-    }
+    !matches!(std::env::var("MEM0_EMBED"), Ok(v) if v.eq_ignore_ascii_case("off"))
 }

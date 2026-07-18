@@ -20,10 +20,8 @@ impl SearchRoots {
     /// 3. `<cache_dir>/mem0/fastembed`
     pub fn from_env() -> Self {
         let mut roots: Vec<PathBuf> = Vec::new();
-        if let Ok(d) = std::env::var("MEM0_EMBED_MODEL_DIR") {
-            if !d.is_empty() {
-                roots.push(PathBuf::from(d));
-            }
+        if let Ok(d) = std::env::var("MEM0_EMBED_MODEL_DIR") && !d.is_empty() {
+            roots.push(PathBuf::from(d));
         }
         if let Ok(exe) = std::env::current_exe()
             && let Some(exe_dir) = exe.parent()
