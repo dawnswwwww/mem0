@@ -26,7 +26,7 @@
 
 ---
 
-## Task 1: Spike — verify fastembed-rs API
+### Task 1: Spike — verify fastembed-rs API
 
 **Goal:** Confirm the exact fastembed-rs API surface before building on it, mirroring how the v1.2 plan verified sqlite-vec. Record outcomes in the "Spike outcome" block below (edit this file).
 
@@ -158,7 +158,7 @@ Run: `rm -rf /tmp/mem0-spike`
 
 ---
 
-## Task 2: Feature gate + module scaffold
+### Task 2: Feature gate + module scaffold
 
 **Goal:** Add the optional dependency and feature, and create the feature-gated `embed` module skeleton so both build configurations compile. No behaviour yet.
 
@@ -228,7 +228,7 @@ git commit -m "feat(embed): scaffold opt-in embed feature + module"
 
 ---
 
-## Task 3: Error variants, exit codes, error_json
+### Task 3: Error variants, exit codes, error_json
 
 **Goal:** Add the three new error variants and wire them into `exit_code_for` and `error_json`. Feature-agnostic — these exist in both builds (so the always-declared `--embed` flag can return `EmbedFeatureNotEnabled` even when the feature is off).
 
@@ -312,7 +312,7 @@ git commit -m "feat(embed): add embedder error variants + exit codes"
 
 ---
 
-## Task 4: `embed::model` — name ↔ enum mapping
+### Task 4: `embed::model` — name ↔ enum mapping
 
 **Goal:** Map `--model` string names to `fastembed::EmbeddingModel` variants, defaulting to `multilingual-e5-small`. Pure data — no model loading, no network — so it is fully unit-testable.
 
@@ -473,7 +473,7 @@ git commit -m "feat(embed): model name <-> fastembed variant mapping"
 
 ---
 
-## Task 5: `embed::mod` — Role + prefix + public embed API
+### Task 5: `embed::mod` — Role + prefix + public embed API
 
 **Goal:** Implement the asymmetric e5 prefix (`passage:` / `query:`) and the public `embed_text`/`embed_batch` entry points. Prefix logic is pure and unit-tested without any model.
 
@@ -597,7 +597,7 @@ git commit -m "feat(embed): Role/prefix + embed_text/embed_batch API"
 
 ---
 
-## Task 6: `embed::store` — sidecar model path resolution
+### Task 6: `embed::store` — sidecar model path resolution
 
 **Goal:** Resolve the model from sidecar → cache → lazy-download (spec §6). The path-resolution logic is pure (testable with temp dirs, no network); the actual init is unchanged behaviour.
 
@@ -733,7 +733,7 @@ git commit -m "feat(embed): sidecar cache-dir resolution (env/exe/cache)"
 
 ---
 
-## Task 7: `embed` subcommand
+### Task 7: `embed` subcommand
 
 **Goal:** Add `mem0 embed [TEXT]...` that prints `{"embedding":[...],"dim":N,"model":"..."}`. The subcommand is always declared; when the feature is off it returns `EmbedFeatureNotEnabled`. Default role is Query; `--as-passage` switches to Passage.
 
@@ -899,7 +899,7 @@ git commit -m "feat(embed): mem0 embed subcommand (feature-gated)"
 
 ---
 
-## Task 8: `add` auto-embed precedence
+### Task 8: `add` auto-embed precedence
 
 **Goal:** Implement spec §5 in `add`. Add `--embed`/`--no-embed`/`--model` flags (always declared). With the feature on, `add "x"` auto-embeds unless overridden; with the feature off, `--embed` → `EmbedFeatureNotEnabled` and plain `add "x"` is text-only (v1.2). A piped stdin vector always wins.
 
@@ -1094,7 +1094,7 @@ git commit -m "feat(embed): add auto-embed precedence (--embed/--no-embed/--mode
 
 ---
 
-## Task 9: `vsearch` auto-embed
+### Task 9: `vsearch` auto-embed
 
 **Goal:** Give `vsearch` an optional positional `<QUERY>` text that auto-embeds (Role::Query) when no stdin vector is present, plus `--embed`/`--no-embed`/`--model`. Precedence mirrors `add`. Piped stdin vector still wins.
 
@@ -1273,7 +1273,7 @@ git commit -m "feat(embed): vsearch auto-embeds positional query text"
 
 ---
 
-## Task 10: SKILL docs + packaging note
+### Task 10: SKILL docs + packaging note
 
 **Goal:** Document the new behaviour so agents/users can use it; record the sidecar packaging step.
 
