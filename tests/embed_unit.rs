@@ -41,3 +41,31 @@ fn prefix_trims_only_leading_whitespace_of_input_not_added() {
     // input is taken verbatim after the prefix; prefix is exactly "passage: " / "query: "
     assert_eq!(apply_prefix("  spaced", Role::Query), "query:   spaced");
 }
+
+use mem0::embed::store::{resolve, SearchRoots, hf_cache_subdir};
+
+#[test]
+fn hf_cache_subdir_transform() {
+    // Default model repo is intfloat/multilingual-e5-small (spike-verified).
+    assert_eq!(hf_cache_subdir("intfloat/multilingual-e5-small"),
+               "models--intfloat--multilingual-e5-small");
+}
+
+#[test]
+fn resolve_returns_first_root_with_the_model_subdir() {
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let subdir = hf_cache_subdir(ModelChoice::DEFAULT.repo());
+    // 'b' contains the model's cache subdir; 'a' does not.
+    std::fs::create_dir_all(b.path().join(&subdir)).unwrap();
+    let roots = SearchRoots { roots: vec![a.path().to_path_buf(), b.path().to_path_buf()] };
+    // resolve returns the ROOT (passed to with_cache_dir), not the model subdir.
+    assert_eq!(resolve(ModelChoice::DEFAULT, &roots), Some(b.path().to_path_buf()));
+}
+
+#[test]
+fn resolve_none_when_no_root_has_the_subdir() {
+    let a = tempfile::tempdir().unwrap();
+    let roots = SearchRoots { roots: vec![a.path().to_path_buf()] };
+    assert_eq!(resolve(ModelChoice::DEFAULT, &roots), None);
+}
