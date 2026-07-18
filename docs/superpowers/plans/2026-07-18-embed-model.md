@@ -811,8 +811,9 @@ pub fn run(_conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         return Err(MemError::InvalidArgument("embed text is empty".into()));
     }
 
-    let json_out = json; // always emit the embedding object; --json is accepted for parity
-    let _ = json_out;
+    // `--json` is accepted for CLI parity; the embed command always emits a JSON
+    // object, so the flag is intentionally unused here.
+    let _ = json;
 
     #[cfg(not(feature = "embed"))]
     {
@@ -1203,7 +1204,9 @@ fn resolve_query(args: &Args) -> MemResult<Vec<f32>> {
 
     #[cfg(not(feature = "embed"))]
     {
-        if args.embed { return Err(MemError::EmbedFeatureNotEnabled); }
+        // No embedder compiled in: a text query is unusable. (The --embed flag is
+        // accepted for help-stability but cannot do work; the error is the same.)
+        let _ = args.embed;
         return Err(MemError::EmbedFeatureNotEnabled);
     }
     #[cfg(feature = "embed")]
