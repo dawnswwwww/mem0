@@ -1,6 +1,12 @@
 use assert_cmd::Command;
 
-fn bin() -> Command { Command::cargo_bin("mem0").unwrap() }
+fn bin() -> Command {
+    // MEM0_EMBED=off keeps setup `add` calls from auto-embedding (network)
+    // under --features embed; embed behaviour is covered elsewhere.
+    let mut cmd = Command::cargo_bin("mem0").unwrap();
+    cmd.env("MEM0_EMBED", "off");
+    cmd
+}
 
 fn add_get_id(db: &std::path::Path, content: &str, to: &str) -> String {
     let out = bin().args(["--db", db.to_str().unwrap(), "--json", "add", content, "--to", to])
