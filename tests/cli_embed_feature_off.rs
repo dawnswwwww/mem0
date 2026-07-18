@@ -1,3 +1,8 @@
+// Only meaningful on the default (no-`embed`) build: under `--features embed`
+// `mem0 embed` actually runs the embedder, so the exit-2 / "not compiled in"
+// assertions below would hang (firewalled HF) or fail. Gate the whole file.
+#![cfg(not(feature = "embed"))]
+
 // Compiles WITHOUT --features embed; the subcommand exists but errors.
 //
 // assert_cmd's `unwrap_err()` returns an `OutputError`; the underlying exit code
