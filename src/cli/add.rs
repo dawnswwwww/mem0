@@ -49,6 +49,18 @@ pub struct Args {
     pub tag: Vec<String>,
     #[arg(long)]
     pub session: Option<String>,
+
+    /// Force local embedding for this memory (overrides MEM0_EMBED=off).
+    #[arg(long)]
+    pub embed: bool,
+
+    /// Store text only, do not embed (overrides auto-embed default).
+    #[arg(long)]
+    pub no_embed: bool,
+
+    /// Override the default embedding model.
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
@@ -70,6 +82,60 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         ));
     }
 
+    // --- vector-source precedence (spec §5) ---
+    // Resolve the vector FIRST (outside the transaction) so we don't hold BEGIN
+    // across stdin IO / model inference. Order (highest priority first):
+    //   1. piped stdin vector
+    //   2. --embed                        (auto-embed, feature on)
+    //   3. --no-embed                     (text only)
+    //   4. MEM0_EMBED=off (case-insens.)  (text only)
+    //   5. default                        (auto-embed, feature on)
+    if args.embed && args.no_embed {
+        return Err(MemError::InvalidArgument(
+            "conflicting --embed and --no-embed".into(),
+        ));
+    }
+    #[cfg(not(feature = "embed"))]
+    if args.embed {
+        return Err(MemError::EmbedFeatureNotEnabled);
+    }
+
+    let vec_opt: Option<Vec<f32>> = {
+        // 1. piped stdin vector wins.
+        let piped = maybe_read_vector()?;
+        if piped.is_some() && args.embed {
+            return Err(MemError::InvalidArgument(
+                "piped vector and --embed both request a vector source".into(),
+            ));
+        }
+        match piped {
+            Some(v) => Some(v),
+            None => {
+                // 2/3/4/5: decide whether to auto-embed.
+                #[cfg(feature = "embed")]
+                {
+                    if should_embed(args.embed, args.no_embed) {
+                        let model = match args.model.as_deref() {
+                            Some(n) => crate::embed::ModelChoice::from_name(n)?,
+                            None => crate::embed::ModelChoice::DEFAULT,
+                        };
+                        Some(crate::embed::embed_text(
+                            &content,
+                            crate::embed::Role::Passage,
+                            model,
+                        )?)
+                    } else {
+                        None
+                    }
+                }
+                #[cfg(not(feature = "embed"))]
+                {
+                    None
+                }
+            }
+        }
+    };
+
     let draft = MemoryDraft {
         lifecycle:  args.to,
         content,
@@ -77,11 +143,6 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         session_id,
         source:     Some("cli".into()),
     };
-
-    // Read the vector FIRST (outside the transaction) so we don't hold BEGIN
-    // across stdin IO. Then insert+upsert atomically: an upsert failure rolls
-    // back the memory row.
-    let vec_opt = maybe_read_vector()?;
 
     conn.execute_batch("BEGIN")?;
     let result = (|| -> MemResult<_> {
@@ -110,4 +171,15 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         println!("stored {} as {}", &item.id.to_string()[..8], item.lifecycle);
     }
     Ok(())
+}
+
+/// spec §5 rules 2–5 (feature on): embed > no-embed > MEM0_EMBED=off > default-on.
+#[cfg(feature = "embed")]
+fn should_embed(embed: bool, no_embed: bool) -> bool {
+    if embed { return true; }
+    if no_embed { return false; }
+    match std::env::var("MEM0_EMBED") {
+        Ok(v) if v.eq_ignore_ascii_case("off") => false,
+        _ => true,
+    }
 }
