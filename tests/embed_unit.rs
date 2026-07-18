@@ -27,3 +27,17 @@ fn name_roundtrip_for_known_models() {
 fn unknown_model_errors() {
     assert!(ModelChoice::from_name("gpt-4").is_err());
 }
+
+use mem0::embed::{Role, apply_prefix};
+
+#[test]
+fn prefix_is_asymmetric() {
+    assert_eq!(apply_prefix("hello", Role::Passage), "passage: hello");
+    assert_eq!(apply_prefix("hello", Role::Query),   "query: hello");
+}
+
+#[test]
+fn prefix_trims_only_leading_whitespace_of_input_not_added() {
+    // input is taken verbatim after the prefix; prefix is exactly "passage: " / "query: "
+    assert_eq!(apply_prefix("  spaced", Role::Query), "query:   spaced");
+}
