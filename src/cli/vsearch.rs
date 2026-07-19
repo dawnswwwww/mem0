@@ -27,6 +27,10 @@ pub struct Args {
     #[arg(long)]
     pub max_distance: Option<f64>,
 
+    /// Disable the default gap-based auto-cutoff (keep all top-N hits).
+    #[arg(long)]
+    pub no_cutoff: bool,
+
     /// Force local embedding of the query (overrides MEM0_EMBED=off).
     #[arg(long)]
     pub embed: bool,
@@ -115,6 +119,7 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         layer, session, since_nanos: None,
         limit: args.limit.unwrap_or(20),
         max_distance: args.max_distance,
+        auto_cutoff: !args.no_cutoff,
     };
     let hits = vectors::search(conn, &query, filter)?;
     if json {

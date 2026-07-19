@@ -43,6 +43,7 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         since_nanos,
         limit: args.limit.unwrap_or(20),
         max_distance: None,
+        auto_cutoff: false,
     };
     let items = memories::list(conn, filter)?;
 

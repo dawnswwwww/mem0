@@ -35,6 +35,10 @@ pub struct ListFilter {
     /// Vector search only: drop hits whose cosine distance exceeds this
     /// (lower distance = nearer). Ignored by FTS `search` / `list`.
     pub max_distance: Option<f64>,
+    /// Vector search only: apply gap-based auto-cutoff — keep the leading
+    /// cluster of hits and drop the tail after the largest distance gap (only
+    /// when that gap is a clear outlier). Ignored by FTS `search` / `list`.
+    pub auto_cutoff: bool,
 }
 
 impl ListFilter {
@@ -46,6 +50,7 @@ impl ListFilter {
             since_nanos: None,
             limit,
             max_distance: None,
+            auto_cutoff: false,
         }
     }
 }
