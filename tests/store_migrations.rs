@@ -104,7 +104,7 @@ fn migrate_v2_idempotent() {
     db::migrate(&conn).unwrap();
     db::migrate(&conn).unwrap();  // second call must not error
     let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(v, 3);
+    assert_eq!(v, 4);
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn migrate_v2_db_picks_up_v3_meta_table() {
     mem0::store::db::migrate(&conn).unwrap();
 
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 
     let n: i64 = conn
         .query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='meta'", [], |r| r.get(0))
@@ -154,5 +154,5 @@ fn migrate_v3_is_idempotent() {
     mem0::store::db::migrate(&conn).unwrap();
     mem0::store::db::migrate(&conn).unwrap();
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 }

@@ -213,6 +213,97 @@ fn touch_and_merge(conn: &Connection, id: uuid::Uuid, new_tags: &[String]) -> Me
     Ok(())
 }
 
+/// Collapse existing in-scope duplicate memories: for each duplicate group,
+/// keep the oldest row, merge tags from the others onto it, and delete the
+/// others (their vectors cascade via the `memories_vec_ad` trigger). Returns
+/// the number of rows deleted. Scope matches `store`'s: semantic groups by
+/// content_key only; episodic/working by (content_key, session_id).
+pub fn collapse_duplicates(conn: &Connection) -> MemResult<usize> {
+    let mut deleted = 0usize;
+
+    // Semantic groups (session ignored).
+    let sem_keys: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT content_key FROM memories \
+             WHERE lifecycle = 'semantic' AND content_key IS NOT NULL \
+             GROUP BY content_key HAVING COUNT(*) > 1",
+        )?;
+        let r = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        r.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for key in sem_keys {
+        let members: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT rowid, tags FROM memories \
+                 WHERE lifecycle = 'semantic' AND content_key = ?1 \
+                 ORDER BY created_at ASC, rowid ASC",
+            )?;
+            let r = stmt.query_map(rusqlite::params![key], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            r.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        deleted += collapse_members(conn, members)?;
+    }
+
+    // Episodic + working groups (key = content_key + session_id).
+    let ew_groups: Vec<(String, Option<String>)> = {
+        let mut stmt = conn.prepare(
+            "SELECT content_key, session_id FROM memories \
+             WHERE lifecycle IN ('episodic', 'working') AND content_key IS NOT NULL \
+             GROUP BY content_key, session_id HAVING COUNT(*) > 1",
+        )?;
+        let r = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        r.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (key, session) in ew_groups {
+        let members: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT rowid, tags FROM memories \
+                 WHERE lifecycle IN ('episodic', 'working') AND content_key = ?1 AND session_id IS ?2 \
+                 ORDER BY created_at ASC, rowid ASC",
+            )?;
+            let r = stmt.query_map(rusqlite::params![key, session], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            r.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        deleted += collapse_members(conn, members)?;
+    }
+
+    Ok(deleted)
+}
+
+/// Keep `members[0]` (oldest), merge tags from the rest onto it, delete the rest.
+fn collapse_members(conn: &Connection, members: Vec<(i64, String)>) -> MemResult<usize> {
+    if members.len() < 2 {
+        return Ok(0);
+    }
+    let (keeper, keeper_tags_json) = &members[0];
+    let mut merged: Vec<String> = serde_json::from_str(keeper_tags_json).unwrap_or_default();
+    for (_, tags_json) in &members[1..] {
+        let tags: Vec<String> = serde_json::from_str(tags_json).unwrap_or_default();
+        for t in tags {
+            if !merged.iter().any(|m| m == &t) {
+                merged.push(t);
+            }
+        }
+    }
+    let tags_json = serde_json::to_string(&merged)?;
+    let tags_text = merged.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
+    conn.execute(
+        "UPDATE memories SET tags = ?1, tags_text = ?2, updated_at = ?3 WHERE rowid = ?4",
+        rusqlite::params![tags_json, tags_text, now_nanos(), keeper],
+    )?;
+    let mut n = 0;
+    for (rowid, _) in &members[1..] {
+        n += conn.execute("DELETE FROM memories WHERE rowid = ?1", rusqlite::params![rowid])?;
+    }
+    Ok(n)
+}
+
 pub fn get(conn: &Connection, id: uuid::Uuid) -> MemResult<MemoryItem> {
     let row = conn
         .query_row(

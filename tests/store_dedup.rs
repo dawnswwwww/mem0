@@ -74,3 +74,20 @@ fn touch_merges_tags_and_normalizes_whitespace() {
     assert_eq!(after.tags, vec!["a".to_string(), "b".to_string()], "tags unioned, existing first");
     assert!(after.updated_at >= before.updated_at, "updated_at refreshed");
 }
+
+#[test]
+fn collapse_existing_duplicates() {
+    let (_t, c) = fresh();
+    // Two raw inserts of identical semantic content with different tags.
+    memories::insert(&c, &draft(Lifecycle::Semantic, "dup fact", vec!["a".into()], None)).unwrap();
+    memories::insert(&c, &draft(Lifecycle::Semantic, "dup fact", vec!["b".into()], None)).unwrap();
+    assert_eq!(memories::list(&c, ListFilter::default_limit(100)).unwrap().len(), 2);
+
+    let deleted = memories::collapse_duplicates(&c).unwrap();
+    assert_eq!(deleted, 1);
+
+    let remaining = memories::list(&c, ListFilter::default_limit(100)).unwrap();
+    assert_eq!(remaining.len(), 1, "one survivor after collapse");
+    // tags merged onto the oldest survivor (existing-first order: a, then b)
+    assert_eq!(remaining[0].tags, vec!["a".to_string(), "b".to_string()]);
+}
