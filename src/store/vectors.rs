@@ -168,8 +168,11 @@ pub fn search(
     }
 
     // 3. Preserve KNN distance order (row order from the filtered fetch is not
-    //    guaranteed to be by distance), then cap.
+    //    guaranteed to be by distance), optionally drop distant noise, then cap.
     out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    if let Some(maxd) = filter.max_distance {
+        out.retain(|(_, d)| *d <= maxd);
+    }
     let limit = if filter.limit == 0 { 20 } else { filter.limit };
     out.truncate(limit.min(1000) as usize);
     Ok(out)

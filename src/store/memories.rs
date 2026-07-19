@@ -32,6 +32,9 @@ pub struct ListFilter {
     pub session:      Option<uuid::Uuid>,
     pub since_nanos:  Option<i64>,
     pub limit:        u32,
+    /// Vector search only: drop hits whose cosine distance exceeds this
+    /// (lower distance = nearer). Ignored by FTS `search` / `list`.
+    pub max_distance: Option<f64>,
 }
 
 impl ListFilter {
@@ -42,6 +45,7 @@ impl ListFilter {
             session: None,
             since_nanos: None,
             limit,
+            max_distance: None,
         }
     }
 }

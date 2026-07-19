@@ -22,6 +22,11 @@ pub struct Args {
     #[arg(long)]
     pub limit: Option<u32>,
 
+    /// Drop hits whose cosine distance exceeds this (lower = nearer; e.g. 0.15).
+    /// Prunes the long tail of weakly-related results on short queries.
+    #[arg(long)]
+    pub max_distance: Option<f64>,
+
     /// Force local embedding of the query (overrides MEM0_EMBED=off).
     #[arg(long)]
     pub embed: bool,
@@ -109,6 +114,7 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
     let filter = ListFilter {
         layer, session, since_nanos: None,
         limit: args.limit.unwrap_or(20),
+        max_distance: args.max_distance,
     };
     let hits = vectors::search(conn, &query, filter)?;
     if json {
