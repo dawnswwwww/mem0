@@ -80,6 +80,20 @@ pub(crate) fn row_to_item(row: &Row<'_>) -> rusqlite::Result<MemoryItem> {
     })
 }
 
+/// Normalized content used as the dedup key: trimmed, runs of whitespace
+/// collapsed to one space. NOT casefolded (preserves JST/jst, paths, code).
+/// (NFC not applied — input is almost always already composed; rare edge case.)
+pub fn normalize_content(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// What `store` did with a draft: created a new row, or touched an existing one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreAction {
+    Inserted,
+    Touched,
+}
+
 pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
     if draft.content.is_empty() {
         return Err(MemError::InvalidArgument("content cannot be empty".into()));
@@ -95,9 +109,10 @@ pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
         .map(|t| t.to_lowercase())
         .collect::<Vec<_>>()
         .join(" ");
+    let content_key = normalize_content(&draft.content);
     conn.execute(
-        "INSERT INTO memories (id, lifecycle, content, source, session_id, tags, tags_text, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        "INSERT INTO memories (id, lifecycle, content, source, session_id, tags, tags_text, content_key, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
         rusqlite::params![
             id.to_string(),
             draft.lifecycle.to_string(),
@@ -106,10 +121,96 @@ pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
             draft.session_id.map(|u| u.to_string()),
             tags_json,
             tags_text,
+            content_key,
             ts,
         ],
     )?;
     Ok(id)
+}
+
+/// Store a draft with optional content dedup. When `dedup` and an in-scope
+/// duplicate exists, the existing row is touched (updated_at refreshed, tags
+/// merged) and `(existing_id, Touched)` returned — no new row. Otherwise inserts.
+///
+/// Scope: `semantic` dedups globally (ignores session); `episodic`/`working`
+/// dedup within the same session (a repeat across sessions is a distinct event).
+pub fn store(conn: &Connection, draft: &MemoryDraft, dedup: bool) -> MemResult<(uuid::Uuid, StoreAction)> {
+    if draft.content.is_empty() {
+        return Err(MemError::InvalidArgument("content cannot be empty".into()));
+    }
+    if dedup {
+        let key = normalize_content(&draft.content);
+        if let Some(existing) = find_dup(conn, draft, &key)? {
+            touch_and_merge(conn, existing, &draft.tags)?;
+            return Ok((existing, StoreAction::Touched));
+        }
+    }
+    let id = insert(conn, draft)?;
+    Ok((id, StoreAction::Inserted))
+}
+
+/// Find an in-scope duplicate by content_key. `semantic` ignores session;
+/// `episodic`/`working` match session_id (Some-equal or both NULL).
+fn find_dup(conn: &Connection, draft: &MemoryDraft, key: &str) -> MemResult<Option<uuid::Uuid>> {
+    let lc = draft.lifecycle.to_string();
+    let id_s: Option<String> = match draft.lifecycle {
+        Lifecycle::Semantic => conn
+            .query_row(
+                "SELECT id FROM memories WHERE lifecycle = ?1 AND content_key = ?2 \
+                 ORDER BY created_at LIMIT 1",
+                rusqlite::params![lc, key],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?,
+        Lifecycle::Episodic | Lifecycle::Working => match draft.session_id {
+            Some(s) => conn
+                .query_row(
+                    "SELECT id FROM memories WHERE lifecycle = ?1 AND content_key = ?2 \
+                     AND session_id = ?3 ORDER BY created_at LIMIT 1",
+                    rusqlite::params![lc, key, s.to_string()],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?,
+            None => conn
+                .query_row(
+                    "SELECT id FROM memories WHERE lifecycle = ?1 AND content_key = ?2 \
+                     AND session_id IS NULL ORDER BY created_at LIMIT 1",
+                    rusqlite::params![lc, key],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?,
+        },
+    };
+    id_s.map(|s| ids::parse(&s)).transpose()
+}
+
+/// Refresh `updated_at` and union `tags` onto an existing memory (dedup hit).
+fn touch_and_merge(conn: &Connection, id: uuid::Uuid, new_tags: &[String]) -> MemResult<()> {
+    let ts = now_nanos();
+    let existing_tags: Vec<String> = {
+        let s: String = conn.query_row(
+            "SELECT tags FROM memories WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+            |r| r.get(0),
+        )?;
+        serde_json::from_str(&s).unwrap_or_default()
+    };
+    let mut merged: Vec<String> = existing_tags;
+    for t in new_tags {
+        if !merged.iter().any(|m| m == t) {
+            merged.push(t.clone());
+        }
+    }
+    let tags_json = serde_json::to_string(&merged)?;
+    let tags_text = merged.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
+    let n = conn.execute(
+        "UPDATE memories SET updated_at = ?1, tags = ?2, tags_text = ?3 WHERE id = ?4",
+        rusqlite::params![ts, tags_json, tags_text, id.to_string()],
+    )?;
+    if n == 0 {
+        return Err(MemError::NotFound(id.to_string()));
+    }
+    Ok(())
 }
 
 pub fn get(conn: &Connection, id: uuid::Uuid) -> MemResult<MemoryItem> {

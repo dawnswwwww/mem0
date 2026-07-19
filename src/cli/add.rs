@@ -61,6 +61,11 @@ pub struct Args {
     /// Override the default embedding model.
     #[arg(long)]
     pub model: Option<String>,
+
+    /// Force a literal duplicate even if identical content exists in scope
+    /// (default is to dedup: touch + merge tags on the existing row).
+    #[arg(long)]
+    pub no_dedup: bool,
 }
 
 pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
@@ -132,18 +137,24 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
 
     conn.execute_batch("BEGIN")?;
     let result = (|| -> MemResult<_> {
-        let id = memories::insert(conn, &draft)?;
+        let (id, action) = memories::store(conn, &draft, !args.no_dedup)?;
         let item = memories::get(conn, id)?;
         if let Some(vec) = &vec_opt {
-            let rowid = conn.last_insert_rowid();
+            // Look up rowid by id (works for both Inserted and Touched — Touched
+            // did no INSERT, so last_insert_rowid() would be wrong).
+            let rowid: i64 = conn.query_row(
+                "SELECT rowid FROM memories WHERE id = ?1",
+                rusqlite::params![id.to_string()],
+                |r| r.get(0),
+            )?;
             vectors::upsert(conn, rowid, vec)?;
         }
-        Ok(item)
+        Ok((item, action))
     })();
-    let item = match result {
-        Ok(item) => {
+    let (item, action) = match result {
+        Ok(v) => {
             conn.execute_batch("COMMIT")?;
-            item
+            v
         }
         Err(e) => {
             let _ = conn.execute_batch("ROLLBACK");
@@ -152,9 +163,18 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
     };
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&format::memory_json(&item))?);
+        let mut v = format::memory_json(&item);
+        v["action"] = match action {
+            memories::StoreAction::Inserted => "stored",
+            memories::StoreAction::Touched  => "touched",
+        }.into();
+        println!("{}", serde_json::to_string_pretty(&v)?);
     } else {
-        println!("stored {} as {}", &item.id.to_string()[..8], item.lifecycle);
+        let (verb, suffix) = match action {
+            memories::StoreAction::Inserted => ("stored", ""),
+            memories::StoreAction::Touched  => ("touched", " (dedup)"),
+        };
+        println!("{} {} as {}{}", verb, &item.id.to_string()[..8], item.lifecycle, suffix);
     }
     Ok(())
 }

@@ -109,7 +109,7 @@ fn migrate_sets_user_version_to_latest_on_fresh_db() {
     let v: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 3);
+    assert_eq!(v, 4);
 }
 
 #[test]
