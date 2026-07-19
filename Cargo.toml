@@ -17,6 +17,10 @@ path = "src/lib.rs"
 name = "mem0"
 path = "src/main.rs"
 
+[[example]]
+name = "reembed"
+required-features = ["embed"]
+
 [dependencies]
 clap        = { version = "4", features = ["derive", "env"] }
 rusqlite    = { version = "0.32", features = ["bundled"] }
