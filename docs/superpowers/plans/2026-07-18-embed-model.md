@@ -26,14 +26,14 @@
 
 ---
 
-## Task 1: Spike — verify fastembed-rs API
+### Task 1: Spike — verify fastembed-rs API
 
 **Goal:** Confirm the exact fastembed-rs API surface before building on it, mirroring how the v1.2 plan verified sqlite-vec. Record outcomes in the "Spike outcome" block below (edit this file).
 
 **Files:**
 - Create (throwaway, not committed): `/tmp/mem0-spike/Cargo.toml` and `/tmp/mem0-spike/src/main.rs`
 
-- [ ] **Step 1: Create a throwaway crate outside the repo**
+- [x] **Step 1: Create a throwaway crate outside the repo**
 
 ```bash
 mkdir -p /tmp/mem0-spike/src
@@ -74,12 +74,12 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `cd /tmp/mem0-spike && cargo run`
 Expected: prints `n=2 dim=384` and a list containing `intfloat/multilingual-e5-small` (and notes whether `…-small-Q` / a quantized form appears). First run downloads the model (~120 MB) into the HF cache.
 
-- [ ] **Step 3: Verify the cache-dir offline approach + repo ids**
+- [x] **Step 3: Verify the cache-dir offline approach + repo ids**
 
 Research finding: fastembed's `UserDefinedEmbeddingModel` takes **raw bytes** (`&[u8]` + a
 `TokenizerFiles` struct), not paths — so byte-loading a sidecar is awkward. Instead we ship
@@ -88,7 +88,7 @@ a **pre-populated fastembed cache dir** beside the binary and pass it via
 
 1. Step 2 already primed the cache. Find where: `ls -d .fastembed_cache/models--* 2>/dev/null
    || ls -d "$HF_HOME"/models--* 2>/dev/null` — record the exact subdir name for
-   multilingual-e5-small (expected `models--Qdrant--multilingual-e5-small`).
+   multilingual-e5-small. **Spike-verified: `models--intfloat--multilingual-e5-small`** (fastembed's `model_code` for `MultilingualE5Small` is `intfloat/multilingual-e5-small`, not `Qdrant/…`).
 2. Replace `main.rs`'s body with an offline-from-cache run:
 
 ```rust
@@ -109,26 +109,47 @@ Expected: prints `offline ok, dim=384` with **no network access**. Record the ex
 subdir name for Task 6 + packaging. If `HF_HUB_OFFLINE=1` still hits the network, record
 the working offline incantation (the sidecar depends on it).
 
-- [ ] **Step 4: Record outcomes — fill in this block**
+- [x] **Step 4: Record outcomes — fill in this block**
 
 Edit this plan file, replacing the Spike outcome table (below) with the verified values. Do NOT proceed to Task 2 until the table is filled with concrete answers (not guesses).
 
-- [ ] **Step 5: Clean up**
+- [x] **Step 5: Clean up**
 
 Run: `rm -rf /tmp/mem0-spike`
 
-### Spike outcome (fastembed-rs — FILL IN during Task 1)
+### Spike outcome (fastembed-rs — VERIFIED in Task 1, 2026-07-18)
+
+Spike crate `/tmp/mem0-spike` ran green; offline embed confirmed. Resolved
+versions: `fastembed 5.17.3`, `ort 2.0.0-rc.12`, `hf-hub 0.5.0`,
+`tokenizers 0.22.2`. Full report: `.superpowers/sdd/task-1-report.md`.
 
 | Concern | Verified answer |
 |---|---|
-| crate / version | `fastembed = "5"` (confirm exact resolved patch in `Cargo.lock`) |
-| init type | `TextInitOptions::new(model).with_show_download_progress(bool).with_cache_dir(PathBuf)` — `with_cache_dir` confirmed to exist |
-| load model | `TextEmbedding::try_new(TextInitOptions)` (download/cache path). **Sidecar strategy = ship a pre-populated cache dir, point `with_cache_dir` at it** — NOT `UserDefinedEmbeddingModel` (which takes raw bytes, awkward for a file sidecar). |
-| cache-dir offline | `HF_HUB_OFFLINE=1` + `with_cache_dir(primed_dir)` loads with no network — confirm; record the cache subdir name (e.g. `models--Qdrant--multilingual-e5-small`) |
-| embed | `embed(&mut self, texts: Vec<String>, batch: Option<usize>) -> Result<Vec<Embedding>>` where `Embedding = Vec<f32>` — confirm `&mut self` |
-| default features | whether plain `fastembed = "5"` enables download (is an `hf-hub` feature required for network fetch?) |
-| quantized | `MultilingualE5SmallQ` is a built-in `EmbeddingModel` variant (confirmed) — consider shipping it to roughly halve sidecar size; confirm its `repo()` cache subdir if used |
-| Send+Sync / static | (informational) is `TextEmbedding: Send + Sync`? — we use init-per-call regardless (see "Refinement" below) |
+| crate / version | `fastembed = "5"` → **resolves to 5.17.3** (`ort 2.0.0-rc.12`, `hf-hub 0.5.0`, `tokenizers 0.22.2`). |
+| init type | `TextInitOptions = InitOptionsWithLength<EmbeddingModel>`. `TextInitOptions::new(model).with_show_download_progress(bool).with_cache_dir(PathBuf)` — **both builders confirmed**. Also `.with_max_length(usize)` / `.with_intra_threads(usize)` / `.with_execution_providers(...)` exist (unused here). Default `cache_dir = FASTEMBED_CACHE_DIR ?? ".fastembed_cache"`. |
+| load model | `TextEmbedding::try_new(TextInitOptions) -> Result<TextEmbedding>` — confirmed. **Sidecar strategy = ship a pre-populated cache dir, point `with_cache_dir` at it** — NOT `UserDefinedEmbeddingModel` (which takes `onnx_file: Vec<u8>` + `TokenizerFiles`, awkward for a file sidecar). |
+| cache-dir offline | **Confirmed.** `HF_HUB_OFFLINE=1` + `with_cache_dir(primed_dir)` loads with **zero network** and embeds successfully (`offline ok, n=1 dim=384`). **Caveat:** `HF_HOME`, if set, *overrides* `with_cache_dir(...)` (fastembed `pull_from_hf` prefers `HF_HOME`). Document this in the packaging note; the CLI sidecar path assumes `HF_HOME` is unset. |
+| cache subdir (default model) | **`models--intfloat--multilingual-e5-small`** (NOT `models--Qdrant--…`). Snapshot revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`. Files fastembed fetches: `onnx/model.onnx` (470 MB), `tokenizer.json` (17 MB), `config.json`, `special_tokens_map.json`, `tokenizer_config.json`. |
+| embed | `pub fn embed<S: AsRef<str> + Send + Sync>(&mut self, texts: impl AsRef<[S]>, batch_size: Option<usize>) -> Result<Vec<Embedding>>` where `pub type Embedding = Vec<f32>;`. **`&mut self` confirmed.** Accepts `Vec<&str>` or `Vec<String>`. e5 prefix is NOT added by fastembed — caller must prepend. |
+| default features | Plain `fastembed = "5"` **enables network download** — `default = ["ort-download-binaries-native-tls", "hf-hub-native-tls", "image-models"]`. No extra feature needed for download; CPU execution provider only (no `directml`/`cuda`/`mkl`). |
+| quantized | **`MultilingualE5SmallQ` does NOT exist in fastembed 5.17.3.** The `MultilingualE5*` family is exactly `MultilingualE5Small` (384) / `MultilingualE5Base` (768) / `MultilingualE5Large` (1024) — none have a `Q` variant. The "ship quantized to halve sidecar size" idea is **not actionable** for the default model with this version. (Q-variants DO exist for `AllMiniLML6V2Q`, `BGESmallENV15Q`, `NomicEmbedTextV15Q`, `SnowflakeArcticEmbed*Q`, etc.) |
+| Send+Sync / static | `TextEmbedding` is auto `Send + Sync` (`ort::session::SharedSessionInner: Send + Sync`). We still init-per-call per the refinement below — no `OnceLock<&mut>` problem. |
+
+**HF repo (`model_code`) strings — VERIFIED from `src/models/text_embedding.rs`** (the field is `model_code`, not `model`/`repo()`; the onnx filename is `model_file`):
+
+| `ModelChoice` | fastembed variant | `model_code` (HF repo) | `model_file` | cache subdir |
+|---|---|---|---|---|
+| MultilingualE5Small (default) | `MultilingualE5Small` | **`intfloat/multilingual-e5-small`** | `onnx/model.onnx` | `models--intfloat--multilingual-e5-small` |
+| AllMiniLML6V2 | `AllMiniLML6V2` | **`Qdrant/all-MiniLM-L6-v2-onnx`** | `model.onnx` | `models--Qdrant--all-MiniLM-L6-v2-onnx` |
+| BGESmallENV15 | `BGESmallENV15` | **`Xenova/bge-small-en-v1.5`** | `onnx/model.onnx` | `models--Xenova--bge-small-en-v1.5` |
+| BGESmallZHV15 | `BGESmallZHV15` | **`Xenova/bge-small-zh-v1.5`** | `onnx/model.onnx` | `models--Xenova--bge-small-zh-v1.5` |
+| NomicEmbedTextV15 | `NomicEmbedTextV15` | `nomic-ai/nomic-embed-text-v1.5` | `onnx/model.onnx` | `models--nomic-ai--nomic-embed-text-v1.5` |
+
+**⚠ Plan corrections applied downstream** (Tasks 4/6/10): the previous draft's
+`repo()` strings guessed `Qdrant/…` for 4 of 5 models; the verified values
+above are authoritative (4 differ). Task 4's `repo()` match-arms, Task 6's
+`hf_cache_subdir` unit test, and Task 10's packaging doc have been updated to
+use `intfloat/multilingual-e5-small` for the default.
 
 **Refinement vs spec §3 (plan-authoritative):** fastembed's `embed()` is `&mut self`, so a `OnceLock`-stored singleton borrows awkwardly. Since the CLI is stateless (one embed per invocation), `embed::embed_text`/`embed_batch` **initialise the model per call/batch** instead of holding a process-wide singleton. For `add`/`vsearch` (one embed each) this is one init per invocation — same cost, no `&mut`-in-static problem. The spec's "singleton" intent (don't re-init within a batch) is still satisfied because `embed_batch` inits once for the whole batch.
 
@@ -158,7 +179,7 @@ Run: `rm -rf /tmp/mem0-spike`
 
 ---
 
-## Task 2: Feature gate + module scaffold
+### Task 2: Feature gate + module scaffold
 
 **Goal:** Add the optional dependency and feature, and create the feature-gated `embed` module skeleton so both build configurations compile. No behaviour yet.
 
@@ -228,7 +249,7 @@ git commit -m "feat(embed): scaffold opt-in embed feature + module"
 
 ---
 
-## Task 3: Error variants, exit codes, error_json
+### Task 3: Error variants, exit codes, error_json
 
 **Goal:** Add the three new error variants and wire them into `exit_code_for` and `error_json`. Feature-agnostic — these exist in both builds (so the always-declared `--embed` flag can return `EmbedFeatureNotEnabled` even when the feature is off).
 
@@ -312,7 +333,7 @@ git commit -m "feat(embed): add embedder error variants + exit codes"
 
 ---
 
-## Task 4: `embed::model` — name ↔ enum mapping
+### Task 4: `embed::model` — name ↔ enum mapping
 
 **Goal:** Map `--model` string names to `fastembed::EmbeddingModel` variants, defaulting to `multilingual-e5-small`. Pure data — no model loading, no network — so it is fully unit-testable.
 
@@ -422,14 +443,15 @@ impl ModelChoice {
         self.name()
     }
 
-    /// HuggingFace repo fastembed downloads from. Used to detect a pre-populated
-    /// sidecar cache subdir (`models--<org>--<name>`). Spike-confirmed in Task 1.
+    /// HuggingFace repo fastembed downloads from (the fastembed `model_code`
+    /// field, verified in Task 1). Used to detect a pre-populated sidecar cache
+    /// subdir (`models--<org>--<name>`).
     pub fn repo(&self) -> &'static str {
         match self {
-            ModelChoice::MultilingualE5Small => "Qdrant/multilingual-e5-small",
-            ModelChoice::AllMiniLML6V2       => "Qdrant/all-MiniLM-L6-v2",
-            ModelChoice::BGESmallENV15       => "Qdrant/bge-small-en-v1.5",
-            ModelChoice::BGESmallZHV15       => "Qdrant/bge-small-zh-v1.5",
+            ModelChoice::MultilingualE5Small => "intfloat/multilingual-e5-small",
+            ModelChoice::AllMiniLML6V2       => "Qdrant/all-MiniLM-L6-v2-onnx",
+            ModelChoice::BGESmallENV15       => "Xenova/bge-small-en-v1.5",
+            ModelChoice::BGESmallZHV15       => "Xenova/bge-small-zh-v1.5",
             ModelChoice::NomicEmbedTextV15   => "nomic-ai/nomic-embed-text-v1.5",
         }
     }
@@ -446,7 +468,7 @@ impl ModelChoice {
 }
 ```
 
-> **Spike-dependent:** confirm each `fastembed::EmbeddingModel::*` variant name exists (Task 1). If a variant differs (e.g. `MultilingualE5Small` vs `MultilingualE5SmallV1`), use the verified name. Add the quantized variant here only if Task 1 confirms one exists and we choose to ship it.
+> **Spike-confirmed (Task 1):** all five `fastembed::EmbeddingModel::*` variant names above exist in 5.17.3. The `repo()` strings are the verified fastembed `model_code` values (4 of 5 differ from the original draft — see the Spike outcome table). **No `MultilingualE5SmallQ` variant exists** in this fastembed version, so no quantized arm is added for the default model.
 
 - [ ] **Step 4: Declare the submodule in `src/embed/mod.rs`**
 
@@ -473,7 +495,7 @@ git commit -m "feat(embed): model name <-> fastembed variant mapping"
 
 ---
 
-## Task 5: `embed::mod` — Role + prefix + public embed API
+### Task 5: `embed::mod` — Role + prefix + public embed API
 
 **Goal:** Implement the asymmetric e5 prefix (`passage:` / `query:`) and the public `embed_text`/`embed_batch` entry points. Prefix logic is pure and unit-tested without any model.
 
@@ -597,7 +619,7 @@ git commit -m "feat(embed): Role/prefix + embed_text/embed_batch API"
 
 ---
 
-## Task 6: `embed::store` — sidecar model path resolution
+### Task 6: `embed::store` — sidecar model path resolution
 
 **Goal:** Resolve the model from sidecar → cache → lazy-download (spec §6). The path-resolution logic is pure (testable with temp dirs, no network); the actual init is unchanged behaviour.
 
@@ -616,8 +638,9 @@ use mem0::embed::store::{resolve, SearchRoots, hf_cache_subdir};
 
 #[test]
 fn hf_cache_subdir_transform() {
-    assert_eq!(hf_cache_subdir("Qdrant/multilingual-e5-small"),
-               "models--Qdrant--multilingual-e5-small");
+    // Default model repo is intfloat/multilingual-e5-small (spike-verified).
+    assert_eq!(hf_cache_subdir("intfloat/multilingual-e5-small"),
+               "models--intfloat--multilingual-e5-small");
 }
 
 #[test]
@@ -713,7 +736,7 @@ pub fn init(model: ModelChoice) -> MemResult<fastembed::TextEmbedding> {
 }
 ```
 
-> **Spike-dependent:** confirm `TextInitOptions::with_cache_dir(PathBuf)` exists and that `HF_HUB_OFFLINE=1` + `with_cache_dir(primed_dir)` loads with no network (Task 1 Step 3). The HF cache subdir transform (`models--<org>--<name>`) is standard; confirm the exact `repo()` string fastembed uses (Task 1) so `resolve` detects the right subdir. The download-fallback path (no `with_cache_dir`) is correct regardless and is what the `#[ignore]` e2e tests exercise.
+> **Spike-confirmed (Task 1):** `TextInitOptions::with_cache_dir(PathBuf)` exists and `HF_HUB_OFFLINE=1` + `with_cache_dir(primed_dir)` loads with **no network** (verified: `offline ok, n=1 dim=384`). The HF cache subdir transform (`models--<org>--<name>`) is standard; the default model's repo is **`intfloat/multilingual-e5-small`** → subdir `models--intfloat--multilingual-e5-small`. **Caveat:** fastembed's `pull_from_hf` prefers `HF_HOME` over the `with_cache_dir` value, so if `HF_HOME` is set the sidecar is bypassed — acceptable (the download fallback still works); document in the packaging note. The download-fallback path (no `with_cache_dir`) is correct regardless and is what the `#[ignore]` e2e tests exercise.
 
 - [ ] **Step 4: Add `tempfile` to dev-dependencies if missing**
 
@@ -733,7 +756,7 @@ git commit -m "feat(embed): sidecar cache-dir resolution (env/exe/cache)"
 
 ---
 
-## Task 7: `embed` subcommand
+### Task 7: `embed` subcommand
 
 **Goal:** Add `mem0 embed [TEXT]...` that prints `{"embedding":[...],"dim":N,"model":"..."}`. The subcommand is always declared; when the feature is off it returns `EmbedFeatureNotEnabled`. Default role is Query; `--as-passage` switches to Passage.
 
@@ -811,8 +834,9 @@ pub fn run(_conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         return Err(MemError::InvalidArgument("embed text is empty".into()));
     }
 
-    let json_out = json; // always emit the embedding object; --json is accepted for parity
-    let _ = json_out;
+    // `--json` is accepted for CLI parity; the embed command always emits a JSON
+    // object, so the flag is intentionally unused here.
+    let _ = json;
 
     #[cfg(not(feature = "embed"))]
     {
@@ -898,7 +922,7 @@ git commit -m "feat(embed): mem0 embed subcommand (feature-gated)"
 
 ---
 
-## Task 8: `add` auto-embed precedence
+### Task 8: `add` auto-embed precedence
 
 **Goal:** Implement spec §5 in `add`. Add `--embed`/`--no-embed`/`--model` flags (always declared). With the feature on, `add "x"` auto-embeds unless overridden; with the feature off, `--embed` → `EmbedFeatureNotEnabled` and plain `add "x"` is text-only (v1.2). A piped stdin vector always wins.
 
@@ -1093,7 +1117,7 @@ git commit -m "feat(embed): add auto-embed precedence (--embed/--no-embed/--mode
 
 ---
 
-## Task 9: `vsearch` auto-embed
+### Task 9: `vsearch` auto-embed
 
 **Goal:** Give `vsearch` an optional positional `<QUERY>` text that auto-embeds (Role::Query) when no stdin vector is present, plus `--embed`/`--no-embed`/`--model`. Precedence mirrors `add`. Piped stdin vector still wins.
 
@@ -1203,7 +1227,9 @@ fn resolve_query(args: &Args) -> MemResult<Vec<f32>> {
 
     #[cfg(not(feature = "embed"))]
     {
-        if args.embed { return Err(MemError::EmbedFeatureNotEnabled); }
+        // No embedder compiled in: a text query is unusable. (The --embed flag is
+        // accepted for help-stability but cannot do work; the error is the same.)
+        let _ = args.embed;
         return Err(MemError::EmbedFeatureNotEnabled);
     }
     #[cfg(feature = "embed")]
@@ -1270,7 +1296,7 @@ git commit -m "feat(embed): vsearch auto-embeds positional query text"
 
 ---
 
-## Task 10: SKILL docs + packaging note
+### Task 10: SKILL docs + packaging note
 
 **Goal:** Document the new behaviour so agents/users can use it; record the sidecar packaging step.
 
@@ -1319,12 +1345,25 @@ offline, fetch the default model into `<release_dir>/models/multilingual-e5-smal
 
 1. Build: `cargo build --features embed --release`
 2. Prime the cache once: run `./target/release/mem0 embed "warmup"` (downloads into the
-   HF cache as a cache subdir named `models--Qdrant--multilingual-e5-small`).
+   fastembed cache as a subdir named **`models--intfloat--multilingual-e5-small`** —
+   spike-verified; fastembed's `model_code` for `MultilingualE5Small` is
+   `intfloat/multilingual-e5-small`, not `Qdrant/…`). Five files land in
+   `blobs/` (+ symlinks under `snapshots/<rev>/`): `onnx/model.onnx` (~470 MB),
+   `tokenizer.json`, `config.json`, `special_tokens_map.json`, `tokenizer_config.json`.
 3. Ship that cache subdir beside the binary, **preserving its name**:
-   `mkdir -p target/release/models && cp -R "$HF_HOME/hub/models--Qdrant--multilingual-e5-small" target/release/models/`
-   (exact source path confirmed during Task 1 spike). This works because `<exe_dir>/models/`
-   is a `SearchRoot` and `resolve()` looks for `models--Qdrant--multilingual-e5-small`.
+   `mkdir -p target/release/models && cp -R .fastembed_cache/models--intfloat--multilingual-e5-small target/release/models/`
+   (or from wherever `FASTEMBED_CACHE_DIR`/`HF_HOME` pointed). This works because
+   `<exe_dir>/models/` is a `SearchRoot` and `resolve()` looks for
+   `models--intfloat--multilingual-e5-small`.
 4. Archive `target/release/{mem0, models/}` together.
+
+**`HF_HOME` caveat:** fastembed's `pull_from_hf` prefers `HF_HOME` over the
+`with_cache_dir(...)` value, so if the end-user has `HF_HOME` set, the shipped
+sidecar under `<exe_dir>/models/` is bypassed (fastembed will look in `$HF_HOME`
+instead). This is harmless — the binary still works (lazy download fallback) —
+but document it. For a guaranteed-offline sidecar, advise users to leave
+`HF_HOME` unset, or have the CLI unset `HF_HOME` for the embed path (out of
+scope for v1.3). `HF_HUB_OFFLINE=1` + a fully-primed cache loads with no network.
 
 The binary still works without the sidecar (falls back to lazy download).
 ```

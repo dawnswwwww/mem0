@@ -12,7 +12,7 @@ fn add_writes_to_specified_layer_and_returns_id() {
     let out = bin()
         .args(["--db", db.to_str().unwrap(), "--json", "add",
                "user likes whiskey", "--to", "semantic",
-               "--tag", "preference"])
+               "--tag", "preference", "--no-embed"])
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -37,7 +37,8 @@ fn add_to_episodic_resolves_session_name_to_id() {
 
     let out = bin()
         .args(["--db", db.to_str().unwrap(), "--json", "add",
-               "Q3 营收 120w", "--to", "episodic", "--session", "s1"])
+               "Q3 营收 120w", "--to", "episodic", "--session", "s1",
+               "--no-embed"])
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -78,11 +79,13 @@ fn add_with_vector_then_vsearch_recalls_it() {
 
 #[test]
 fn add_without_stdin_is_unchanged() {
-    // No piped stdin ⇒ text-only add, exactly as before.
+    // No piped stdin + --no-embed ⇒ text-only add, exactly as in v1.2.
+    // (Under the `embed` feature the default became auto-embed; pinning --no-embed
+    //  keeps this v1.2 regression test network-free on both builds.)
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("mem0.db").to_string_lossy().to_string();
     let out = Command::cargo_bin("mem0").unwrap()
-        .args(["--db", &db, "add", "plain text memory", "--to", "working"])
+        .args(["--db", &db, "add", "plain text memory", "--to", "working", "--no-embed"])
         .output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     // No vector indexed ⇒ vsearch reports not initialized.
@@ -114,4 +117,122 @@ fn add_with_mismatched_vector_rolls_back_memory() {
         .output().unwrap();
     let list_txt = String::from_utf8_lossy(&list.stdout);
     assert!(!list_txt.contains("should-not-persist"), "rolled-back memory leaked into list: {list_txt}");
+}
+
+// --- spec §5 vector-source precedence (Task 8) ---
+//
+// These tests do NOT require the `embed` feature (they assert text-only /
+// error behaviour and flag-conflict parsing). They run on the default build.
+
+mod embed_precedence {
+    use super::bin;
+    use tempfile::TempDir;
+
+    fn tmp_db() -> (TempDir, String) {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("t.db").to_string_lossy().to_string();
+        (dir, db)
+    }
+
+    #[test]
+    fn embed_and_no_embed_conflict_exits_2() {
+        let (_d, db) = tmp_db();
+        let out = bin()
+            .args(["--db", &db, "add", "x", "--to", "semantic", "--embed", "--no-embed"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn piped_vector_with_embed_flag_conflicts_exits_2() {
+        let (_d, db) = tmp_db();
+        let out = bin()
+            .args(["--db", &db, "add", "x", "--to", "semantic", "--embed"])
+            .write_stdin(r#"{"embedding":[1.0,2.0,3.0,4.0]}"#)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "embed"))]
+    fn embed_without_feature_exits_2() {
+        // Default build only: --embed without the feature compiled in must exit 2
+        // with EmbedFeatureNotEnabled. (Under the feature, --embed auto-embeds.)
+        let (_d, db) = tmp_db();
+        let out = bin()
+            .args(["--db", &db, "add", "x", "--to", "semantic", "--embed"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "embed"))]
+    fn plain_add_stays_text_only_without_feature() {
+        // v1.2 regression guard (default build only): with no flags and no piped
+        // stdin, add is text-only. Under the `embed` feature the default becomes
+        // auto-embed, so this test is compiled out there.
+        let (_d, db) = tmp_db();
+        let out = bin()
+            .args(["--db", &db, "add", "plain text memory", "--to", "working"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let vout = bin()
+            .args(["--db", &db, "vsearch"])
+            .write_stdin(r#"{"embedding":[1.0,2.0,3.0,4.0]}"#)
+            .output()
+            .unwrap();
+        assert_eq!(vout.status.code(), Some(3), "expected vector index not initialized");
+    }
+}
+
+#[cfg(feature = "embed")]
+mod autoembed {
+    use super::bin;
+    use tempfile::TempDir;
+
+    #[test]
+    #[ignore] // network: downloads model on first run (HuggingFace firewalled in CI)
+    fn add_autoembed_then_vsearch_recalls() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("mem0.db").to_string_lossy().to_string();
+
+        bin().args(["--db", &db, "add", "the user prefers single malt whiskey", "--to", "semantic"])
+            .assert().success();
+        bin().args(["--db", &db, "add", "unrelated note about the weather", "--to", "semantic"])
+            .assert().success();
+
+        // Compute a query vector via the embed subcommand (Query role, default model).
+        let q = bin().args(["embed", "what does the user drink"]).output().unwrap();
+        assert!(q.status.success(), "stderr: {}", String::from_utf8_lossy(&q.stderr));
+        let qvec = q.stdout.clone();
+
+        // Feed the query vector to vsearch via stdin.
+        let out = bin()
+            .args(["--db", &db, "vsearch", "--layer=semantic", "--limit=5"])
+            .write_stdin(qvec)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains("whiskey"), "top hit should be the whiskey memory: {s}");
+    }
 }

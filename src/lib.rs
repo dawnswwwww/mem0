@@ -2,6 +2,8 @@ pub mod cli;
 pub mod core;
 pub mod output;
 pub mod store;
+#[cfg(feature = "embed")]
+pub mod embed;
 
 pub use core::{MemError, MemResult};
 

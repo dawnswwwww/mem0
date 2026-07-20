@@ -26,6 +26,8 @@ pub fn run(conn: &Connection, args: Args, json: bool) -> MemResult<()> {
         session,
         since_nanos: None,
         limit: args.limit.unwrap_or(20),
+        max_distance: None,
+        auto_cutoff: false,
     };
     let hits = memories::search(conn, &query, filter)?;
     if json {

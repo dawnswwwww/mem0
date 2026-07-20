@@ -167,10 +167,91 @@ pub fn search(
         }
     }
 
-    // 3. Preserve KNN distance order (row order from the filtered fetch is not
-    //    guaranteed to be by distance), then cap.
+    // 3. Preserve KNN distance order, optionally drop distant noise, optionally
+    //    apply gap-based auto-cutoff, then cap.
     out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    if let Some(maxd) = filter.max_distance {
+        out.retain(|(_, d)| *d <= maxd);
+    }
+    if filter.auto_cutoff && out.len() > 1 {
+        let dists: Vec<f64> = out.iter().map(|(_, d)| *d).collect();
+        let keep = gap_cutoff(&dists);
+        out.truncate(keep);
+    }
     let limit = if filter.limit == 0 { 20 } else { filter.limit };
     out.truncate(limit.min(1000) as usize);
     Ok(out)
+}
+
+/// Gap-based auto-cutoff: given distances sorted ascending, return how many of
+/// the leading (nearest) hits to keep. Cuts after the largest distance gap when
+/// that gap is a clear outlier (both absolutely noticeable and ≥ 2× the
+/// next-largest gap); otherwise keeps all. Counting-metric distances only.
+///
+/// Rationale: small embedding models compress cosine distances, so irrelevant
+/// hits cluster just behind the relevant ones. The relevant hits form a tight
+/// leading cluster; the jump to the noise tail is the largest gap. Cutting there
+/// adapts per-query instead of a fixed threshold.
+fn gap_cutoff(distances: &[f64]) -> usize {
+    /// A distance gap below this is not "noticeable" enough to justify cutting
+    /// (tuned for cosine distance on small embedding models, ~0.0–0.3 range).
+    const MIN_GAP: f64 = 0.03;
+
+    let n = distances.len();
+    if n < 3 {
+        return n; // too few points to judge cluster structure
+    }
+    let gaps: Vec<f64> = distances.windows(2).map(|w| w[1] - w[0]).collect();
+    // Largest gap, and the next-largest (to test whether the max is an outlier).
+    let mut desc: Vec<f64> = gaps.clone();
+    desc.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let max_gap = desc[0];
+    let second = desc.get(1).copied().unwrap_or(0.0);
+    if max_gap < MIN_GAP || max_gap < 2.0 * second {
+        return n; // no clear gap — keep everything
+    }
+    // Cut after the first occurrence of the max gap.
+    let idx = gaps
+        .iter()
+        .position(|g| (*g - max_gap).abs() < 1e-12)
+        .unwrap_or(0);
+    idx + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gap_cutoff;
+
+    #[test]
+    fn cuts_at_clear_gap_after_leading_cluster() {
+        // One relevant hit, then a big jump to noise -> keep only the first.
+        let d = [0.102, 0.153, 0.156, 0.157, 0.160];
+        assert_eq!(gap_cutoff(&d), 1);
+    }
+
+    #[test]
+    fn keeps_cluster_before_gap() {
+        // Three relevant hits clustered, then noise -> keep the three.
+        let d = [0.10, 0.11, 0.12, 0.30, 0.31, 0.32];
+        assert_eq!(gap_cutoff(&d), 3);
+    }
+
+    #[test]
+    fn no_cut_when_distances_spread_evenly() {
+        let d = [0.10, 0.12, 0.14, 0.16, 0.18];
+        assert_eq!(gap_cutoff(&d), d.len(), "even spread -> keep all");
+    }
+
+    #[test]
+    fn no_cut_when_gaps_below_floor() {
+        // Tightly packed (all gaps tiny) -> keep all even if one is the largest.
+        let d = [0.100, 0.101, 0.103, 0.104];
+        assert_eq!(gap_cutoff(&d), d.len());
+    }
+
+    #[test]
+    fn too_few_to_judge_keeps_all() {
+        assert_eq!(gap_cutoff(&[0.1]), 1);
+        assert_eq!(gap_cutoff(&[0.1, 0.5]), 2);
+    }
 }

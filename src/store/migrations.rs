@@ -91,6 +91,39 @@ pub fn apply_v3_vector(conn: &Connection) -> MemResult<()> {
     Ok(())
 }
 
+/// v3 → v4 migration: add `content_key` (normalized content) for dedup, backfill
+/// existing rows, and index it. Idempotent (column guard + IF NOT EXISTS index).
+pub fn apply_v4_content_hash(conn: &Connection) -> MemResult<()> {
+    let has_content_key: bool = conn.query_row(
+        "SELECT count(*) > 0 FROM pragma_table_info('memories') WHERE name = 'content_key'",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_content_key {
+        conn.execute_batch("ALTER TABLE memories ADD COLUMN content_key TEXT")?;
+    }
+    // Backfill any rows missing a content_key.
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT rowid, content FROM memories WHERE content_key IS NULL OR content_key = ''",
+        )?;
+        let mapped =
+            stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (rowid, content) in &rows {
+        let key = crate::store::memories::normalize_content(content);
+        conn.execute(
+            "UPDATE memories SET content_key = ?1 WHERE rowid = ?2",
+            rusqlite::params![key, rowid],
+        )?;
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_memories_content_key ON memories(lifecycle, content_key)",
+    )?;
+    Ok(())
+}
+
 pub const V1_SCHEMA: &str = r#"
 -- 1. sessions table (parent, referenced by memories.session_id)
 CREATE TABLE IF NOT EXISTS sessions (

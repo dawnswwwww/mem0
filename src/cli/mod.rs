@@ -6,7 +6,9 @@ use crate::core::error::{MemError, MemResult};
 
 pub mod add;
 pub mod compact;
+pub mod dedup;
 pub mod delete;
+pub mod embed;
 pub mod list;
 pub mod promote;
 pub mod search;
@@ -42,6 +44,8 @@ pub enum Command {
     Session  (crate::cli::session::SessionArgs),
     Stats    (crate::cli::stats::Args),
     Compact  (crate::cli::compact::Args),
+    Embed    (crate::cli::embed::Args),
+    Dedup    (crate::cli::dedup::Args),
 }
 
 pub fn db_path(cli: &Cli) -> PathBuf {
@@ -61,6 +65,9 @@ pub fn exit_code_for(err: &MemError) -> i32 {
         MemError::EmbeddingDimMismatch { .. } => 2,
         MemError::EmbeddingParseError(_)    => 2,
         MemError::VectorNotInitialized      => 3,
+        MemError::EmbedderInitError(_)        => 2,
+        MemError::EmbedderInferenceError(_)   => 2,
+        MemError::EmbedFeatureNotEnabled      => 2,
         MemError::InvalidTransition {..} => 2,
         _ => 1,
     }
@@ -87,5 +94,7 @@ pub fn run(cli: Cli) -> MemResult<()> {
         Command::Session(a) => crate::cli::session::run(&conn, a, cli.json),
         Command::Stats(a)   => crate::cli::stats::run(&conn, a, cli.json),
         Command::Compact(a) => crate::cli::compact::run(&conn, a, cli.json),
+        Command::Embed(a)    => crate::cli::embed::run(&conn, a, cli.json),
+        Command::Dedup(a)    => crate::cli::dedup::run(&conn, a, cli.json),
     }
 }

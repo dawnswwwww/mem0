@@ -32,6 +32,13 @@ pub struct ListFilter {
     pub session:      Option<uuid::Uuid>,
     pub since_nanos:  Option<i64>,
     pub limit:        u32,
+    /// Vector search only: drop hits whose cosine distance exceeds this
+    /// (lower distance = nearer). Ignored by FTS `search` / `list`.
+    pub max_distance: Option<f64>,
+    /// Vector search only: apply gap-based auto-cutoff — keep the leading
+    /// cluster of hits and drop the tail after the largest distance gap (only
+    /// when that gap is a clear outlier). Ignored by FTS `search` / `list`.
+    pub auto_cutoff: bool,
 }
 
 impl ListFilter {
@@ -42,6 +49,8 @@ impl ListFilter {
             session: None,
             since_nanos: None,
             limit,
+            max_distance: None,
+            auto_cutoff: false,
         }
     }
 }
@@ -76,6 +85,20 @@ pub(crate) fn row_to_item(row: &Row<'_>) -> rusqlite::Result<MemoryItem> {
     })
 }
 
+/// Normalized content used as the dedup key: trimmed, runs of whitespace
+/// collapsed to one space. NOT casefolded (preserves JST/jst, paths, code).
+/// (NFC not applied — input is almost always already composed; rare edge case.)
+pub fn normalize_content(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// What `store` did with a draft: created a new row, or touched an existing one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreAction {
+    Inserted,
+    Touched,
+}
+
 pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
     if draft.content.is_empty() {
         return Err(MemError::InvalidArgument("content cannot be empty".into()));
@@ -91,9 +114,10 @@ pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
         .map(|t| t.to_lowercase())
         .collect::<Vec<_>>()
         .join(" ");
+    let content_key = normalize_content(&draft.content);
     conn.execute(
-        "INSERT INTO memories (id, lifecycle, content, source, session_id, tags, tags_text, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        "INSERT INTO memories (id, lifecycle, content, source, session_id, tags, tags_text, content_key, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
         rusqlite::params![
             id.to_string(),
             draft.lifecycle.to_string(),
@@ -102,10 +126,187 @@ pub fn insert(conn: &Connection, draft: &MemoryDraft) -> MemResult<uuid::Uuid> {
             draft.session_id.map(|u| u.to_string()),
             tags_json,
             tags_text,
+            content_key,
             ts,
         ],
     )?;
     Ok(id)
+}
+
+/// Store a draft with optional content dedup. When `dedup` and an in-scope
+/// duplicate exists, the existing row is touched (updated_at refreshed, tags
+/// merged) and `(existing_id, Touched)` returned — no new row. Otherwise inserts.
+///
+/// Scope: `semantic` dedups globally (ignores session); `episodic`/`working`
+/// dedup within the same session (a repeat across sessions is a distinct event).
+pub fn store(conn: &Connection, draft: &MemoryDraft, dedup: bool) -> MemResult<(uuid::Uuid, StoreAction)> {
+    if draft.content.is_empty() {
+        return Err(MemError::InvalidArgument("content cannot be empty".into()));
+    }
+    if dedup {
+        let key = normalize_content(&draft.content);
+        if let Some(existing) = find_dup(conn, draft, &key)? {
+            touch_and_merge(conn, existing, &draft.tags)?;
+            return Ok((existing, StoreAction::Touched));
+        }
+    }
+    let id = insert(conn, draft)?;
+    Ok((id, StoreAction::Inserted))
+}
+
+/// Find an in-scope duplicate by content_key. `semantic` ignores session;
+/// `episodic`/`working` match session_id (Some-equal or both NULL).
+fn find_dup(conn: &Connection, draft: &MemoryDraft, key: &str) -> MemResult<Option<uuid::Uuid>> {
+    let lc = draft.lifecycle.to_string();
+    let id_s: Option<String> = match draft.lifecycle {
+        Lifecycle::Semantic => conn
+            .query_row(
+                "SELECT id FROM memories WHERE lifecycle = ?1 AND content_key = ?2 \
+                 ORDER BY created_at LIMIT 1",
+                rusqlite::params![lc, key],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?,
+        Lifecycle::Episodic | Lifecycle::Working => match draft.session_id {
+            Some(s) => conn
+                .query_row(
+                    "SELECT id FROM memories WHERE lifecycle = ?1 AND content_key = ?2 \
+                     AND session_id = ?3 ORDER BY created_at LIMIT 1",
+                    rusqlite::params![lc, key, s.to_string()],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?,
+            None => conn
+                .query_row(
+                    "SELECT id FROM memories WHERE lifecycle = ?1 AND content_key = ?2 \
+                     AND session_id IS NULL ORDER BY created_at LIMIT 1",
+                    rusqlite::params![lc, key],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?,
+        },
+    };
+    id_s.map(|s| ids::parse(&s)).transpose()
+}
+
+/// Refresh `updated_at` and union `tags` onto an existing memory (dedup hit).
+fn touch_and_merge(conn: &Connection, id: uuid::Uuid, new_tags: &[String]) -> MemResult<()> {
+    let ts = now_nanos();
+    let existing_tags: Vec<String> = {
+        let s: String = conn.query_row(
+            "SELECT tags FROM memories WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+            |r| r.get(0),
+        )?;
+        serde_json::from_str(&s).unwrap_or_default()
+    };
+    let mut merged: Vec<String> = existing_tags;
+    for t in new_tags {
+        if !merged.iter().any(|m| m == t) {
+            merged.push(t.clone());
+        }
+    }
+    let tags_json = serde_json::to_string(&merged)?;
+    let tags_text = merged.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
+    let n = conn.execute(
+        "UPDATE memories SET updated_at = ?1, tags = ?2, tags_text = ?3 WHERE id = ?4",
+        rusqlite::params![ts, tags_json, tags_text, id.to_string()],
+    )?;
+    if n == 0 {
+        return Err(MemError::NotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+/// Collapse existing in-scope duplicate memories: for each duplicate group,
+/// keep the oldest row, merge tags from the others onto it, and delete the
+/// others (their vectors cascade via the `memories_vec_ad` trigger). Returns
+/// the number of rows deleted. Scope matches `store`'s: semantic groups by
+/// content_key only; episodic/working by (content_key, session_id).
+pub fn collapse_duplicates(conn: &Connection) -> MemResult<usize> {
+    let mut deleted = 0usize;
+
+    // Semantic groups (session ignored).
+    let sem_keys: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT content_key FROM memories \
+             WHERE lifecycle = 'semantic' AND content_key IS NOT NULL \
+             GROUP BY content_key HAVING COUNT(*) > 1",
+        )?;
+        let r = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        r.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for key in sem_keys {
+        let members: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT rowid, tags FROM memories \
+                 WHERE lifecycle = 'semantic' AND content_key = ?1 \
+                 ORDER BY created_at ASC, rowid ASC",
+            )?;
+            let r = stmt.query_map(rusqlite::params![key], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            r.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        deleted += collapse_members(conn, members)?;
+    }
+
+    // Episodic + working groups (key = content_key + session_id).
+    let ew_groups: Vec<(String, Option<String>)> = {
+        let mut stmt = conn.prepare(
+            "SELECT content_key, session_id FROM memories \
+             WHERE lifecycle IN ('episodic', 'working') AND content_key IS NOT NULL \
+             GROUP BY content_key, session_id HAVING COUNT(*) > 1",
+        )?;
+        let r = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        r.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (key, session) in ew_groups {
+        let members: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT rowid, tags FROM memories \
+                 WHERE lifecycle IN ('episodic', 'working') AND content_key = ?1 AND session_id IS ?2 \
+                 ORDER BY created_at ASC, rowid ASC",
+            )?;
+            let r = stmt.query_map(rusqlite::params![key, session], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            r.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        deleted += collapse_members(conn, members)?;
+    }
+
+    Ok(deleted)
+}
+
+/// Keep `members[0]` (oldest), merge tags from the rest onto it, delete the rest.
+fn collapse_members(conn: &Connection, members: Vec<(i64, String)>) -> MemResult<usize> {
+    if members.len() < 2 {
+        return Ok(0);
+    }
+    let (keeper, keeper_tags_json) = &members[0];
+    let mut merged: Vec<String> = serde_json::from_str(keeper_tags_json).unwrap_or_default();
+    for (_, tags_json) in &members[1..] {
+        let tags: Vec<String> = serde_json::from_str(tags_json).unwrap_or_default();
+        for t in tags {
+            if !merged.iter().any(|m| m == &t) {
+                merged.push(t);
+            }
+        }
+    }
+    let tags_json = serde_json::to_string(&merged)?;
+    let tags_text = merged.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
+    conn.execute(
+        "UPDATE memories SET tags = ?1, tags_text = ?2, updated_at = ?3 WHERE rowid = ?4",
+        rusqlite::params![tags_json, tags_text, now_nanos(), keeper],
+    )?;
+    let mut n = 0;
+    for (rowid, _) in &members[1..] {
+        n += conn.execute("DELETE FROM memories WHERE rowid = ?1", rusqlite::params![rowid])?;
+    }
+    Ok(n)
 }
 
 pub fn get(conn: &Connection, id: uuid::Uuid) -> MemResult<MemoryItem> {
